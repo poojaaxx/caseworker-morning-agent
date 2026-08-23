@@ -31,35 +31,51 @@ and `DECISIONS.md` → "Deployment" for the full, honest account, including a re
 production incident (private networking failed, was diagnosed live, and fixed) that's
 documented rather than glossed over.
 
-<!--
-SCREENSHOT NEEDED — see "Screenshots & demo" below for exactly what to capture.
-![Caseworker Morning dashboard](docs/images/dashboard.png)
--->
+### 🖥️ Live Application
 
-## 🎥 20-Second Demo
+![Caseworker Morning Dashboard](docs/images/dashboard.png)
 
-<!--
-DEMO GIF NEEDED — see "Screenshots & demo" below for exactly what to capture.
-![Caseworker Morning Demo](docs/demo.gif)
--->
+*The live app's landing screen — a single action, no other setup required.*
 
-## Screenshots & demo — what still needs to be captured
+### 📊 Live Workflow Results
 
-No screenshot or recording exists in this repository yet, and none has been faked
-here. To finish this section, capture and add:
+![Workflow Results](docs/images/workflow-results.png)
 
-1. **`docs/images/dashboard.png`** — open the [live app](https://caseworker-morning-agent.onrender.com/),
-   click **"Process overnight referral queue"**, let the run complete, and screenshot
-   the page once the summary counts and the referral results list are visible (the
-   state showing 6 autonomous / 3 escalated / 3 hand-off).
-2. **`docs/demo.gif`** — a short (~20s) screen recording of the same flow: load the
-   page → click the button → the run completes → scroll through a couple of referral
-   cards (ideally one autonomous, one escalated, one hand-off) → open the audit log
-   section. Convert to a GIF (e.g. with ScreenToGif, Kap, or `ffmpeg`) and keep it
-   small enough for GitHub to render inline.
+*A real run against the live deployment: 6 autonomous, 3 escalated, 3 hand-off, 0
+failed, 0 not_processed — all 12 official referrals.*
 
-Once both files exist at those paths, uncomment the two image tags above — no other
-README changes are needed.
+### 🟢 Autonomous Triage
+
+![Autonomous Triage](docs/images/autonomous-triage.png)
+
+*RF-2026-0413 — no restricted action, no minor in the household: a triage note is
+drafted and waits for a caseworker to adopt or decline it.*
+
+### 🔴 Escalation
+
+![Escalation](docs/images/escalation.png)
+
+*RF-2026-0415 — requests suspending an award (ACA-2026/1 §3.2). The agent does not
+perform the action or draft anything; it escalates with the exact policy basis.*
+
+### 🟠 Day-2 Surprise — Human Hand-off
+
+![ACA-2026/2 Human Hand-off](docs/images/day2-handoff.png)
+
+*RF-2026-0412 — the household includes a minor (ACA-2026/2 §3.9). No triage note is
+generated at all, not even a draft — the run states `TRIAGE NOTE NOT GENERATED`
+explicitly and hands off to a human.*
+
+All five screenshots above were captured directly from the live deployment
+(`https://caseworker-morning-agent.onrender.com/`) by driving a real, unmodified
+Chrome instance through the DevTools Protocol — the button was actually clicked and
+the actual live API response is what's shown. No screenshot was mocked or edited.
+
+A short demo GIF (`docs/demo.gif`) was in scope for this README but is not included —
+capturing screen video/GIF requires interactive screen-recording tooling this
+environment doesn't have, and per this project's own rule, nothing was faked to fill
+the gap. The live demo link above and the screenshots serve the same purpose in the
+meantime.
 
 ---
 
