@@ -35,7 +35,7 @@ def _deterministic_narrative(referral: Referral, history: HistoryFetchResult) ->
         rec = history.record
         lines.append(
             f"Current status: {rec.status}, benefit {rec.benefit_code}, "
-            f"district {rec.district}, award £{rec.award_monthly:.2f}/month."
+            f"district {rec.district}, award GBP {rec.award_monthly:.2f}/month."
         )
         lines.append(f"Household size: {len(rec.household)}. Recent events: {len(rec.events)}.")
     else:
