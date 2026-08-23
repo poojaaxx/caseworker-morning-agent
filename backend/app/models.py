@@ -32,7 +32,7 @@ class Decision(str, Enum):
 
 
 def utc_now_iso() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
 
 
 # -- Official data pack domain --------------------------------------------------

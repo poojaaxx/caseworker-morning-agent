@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
+from app.db import get_audit_log
 from app.models import RunStatus
 from app.orchestrator import OrchestratorError, ReferralRunOrchestrator
 from app.referrals import load_referral_queue
+
+_MILLISECOND_UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
 def test_full_run_processes_all_twelve_official_referrals(make_orchestrator):
@@ -60,6 +65,45 @@ def test_handoff_preserves_already_gathered_context(make_orchestrator):
     assert handoff_result.handoff.context["resident_ref"] == "R-20500"
     assert "household" in handoff_result.handoff.context
     assert handoff_result.triage_note is None  # never drafted
+
+
+def test_record_calls_utc_now_iso_fresh_for_every_audit_event(conn, history_client, monkeypatch):
+    """_record() must generate its own timestamp on every call - not once per run,
+    reused across events."""
+    import app.orchestrator as orchestrator_module
+
+    calls = {"n": 0}
+
+    def counting() -> str:
+        calls["n"] += 1
+        return f"fake-timestamp-{calls['n']}"
+
+    monkeypatch.setattr(orchestrator_module, "utc_now_iso", counting)
+
+    orchestrator = ReferralRunOrchestrator(conn, "timestamp-spy-run", history_client=history_client)
+    orchestrator.run()
+
+    entries = get_audit_log(conn, "timestamp-spy-run")
+    assert len(entries) > 12  # multiple trace events per referral, same as other tests
+    assert calls["n"] == len(entries)  # exactly one utc_now_iso() call per audit row
+    assert [e["timestamp"] for e in entries] == [f"fake-timestamp-{i + 1}" for i in range(len(entries))]
+
+
+def test_audit_timestamps_have_millisecond_precision_and_seq_is_authoritative(make_orchestrator):
+    """Real (non-mocked) clock: every stored timestamp is UTC with millisecond
+    precision, but ordering is guaranteed by seq, not by the timestamp - two events
+    can legitimately land in the same millisecond and seq still disambiguates them."""
+    orchestrator = make_orchestrator(run_id="millisecond-run")
+    orchestrator.run()
+
+    entries = get_audit_log(orchestrator.conn, "millisecond-run")
+    assert len(entries) > 12
+    for entry in entries:
+        assert _MILLISECOND_UTC_TIMESTAMP.match(entry["timestamp"]), entry["timestamp"]
+
+    seqs = [e["seq"] for e in entries]
+    assert seqs == sorted(seqs)
+    assert len(seqs) == len(set(seqs))
 
 
 def test_escalation_preserves_context_for_a_supervisor(make_orchestrator):

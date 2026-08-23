@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+
+_MILLISECOND_UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+
 
 def test_health(client):
     res = client.get("/api/health")
@@ -81,6 +85,22 @@ def test_audit_log_present_after_run(client):
     assert any(e["action"] == "escalation_created" for e in entries)
     assert any(e["action"] == "handoff_created" for e in entries)
     assert any(e["action"] == "triage_note_drafted" for e in entries)
+
+
+def test_audit_log_timestamps_have_millisecond_precision(client):
+    run_id = client.post("/api/runs").json()["run_id"]
+    entries = client.get(f"/api/runs/{run_id}/audit").json()
+    assert entries
+    for e in entries:
+        assert _MILLISECOND_UTC_TIMESTAMP.match(e["timestamp"]), e["timestamp"]
+
+
+def test_audit_log_ordering_is_by_seq_not_timestamp(client):
+    run_id = client.post("/api/runs").json()["run_id"]
+    entries = client.get(f"/api/runs/{run_id}/audit").json()
+    seqs = [e["seq"] for e in entries]
+    assert seqs == sorted(seqs)
+    assert len(seqs) == len(set(seqs))  # seq alone disambiguates entries that share a timestamp
 
 
 def test_history_service_health_endpoint(client):
