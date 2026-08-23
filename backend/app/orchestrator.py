@@ -104,8 +104,13 @@ class Orchestrator:
         self.status = RunStatus.RUNNING
 
         if decision == Decision.REJECT:
-            self._record(step_id, target_id, self._active_tool.name if self._active_tool else step_id,
-                          StepOutcome.REJECTED, "human rejected this irreversible action; not executed")
+            action_name = self._active_tool.name if self._active_tool else step_id
+            summary = "human rejected this irreversible action; not executed"
+            self._record(step_id, target_id, action_name, StepOutcome.REJECTED, summary)
+            self.step_results.append(
+                StepResult(step_id=step_id, outcome=StepOutcome.REJECTED, summary=summary,
+                           detail={"case_id": target_id})
+            )
         else:
             assert self._active_tool is not None and case is not None
             self._execute_target(self._active_tool, case)
@@ -160,8 +165,11 @@ class Orchestrator:
         try:
             self._target_queue = list(tool.get_targets(self.ctx))
         except Exception as exc:  # dependency failure while selecting targets
-            self._record(tool.id, None, tool.name, StepOutcome.FAILED,
-                          f"failed to determine targets: {exc}")
+            summary = f"failed to determine targets: {exc}"
+            self._record(tool.id, None, tool.name, StepOutcome.FAILED, summary)
+            self.step_results.append(
+                StepResult(step_id=tool.id, outcome=StepOutcome.FAILED, summary=summary)
+            )
             self._target_queue = []
 
     def _run_global_tool(self, tool: GlobalTool) -> None:
@@ -183,8 +191,12 @@ class Orchestrator:
     def _process_target(self, tool: PerCaseTool, case: Case) -> None:
         validation = validate_case(case)
         if not validation.is_valid:
-            self._record(tool.id, case.id, tool.name, StepOutcome.SKIPPED,
-                          f"skipped case #{case.id}: validation failed ({validation.errors})")
+            summary = f"skipped case #{case.id}: validation failed ({validation.errors})"
+            self._record(tool.id, case.id, tool.name, StepOutcome.SKIPPED, summary)
+            self.step_results.append(
+                StepResult(step_id=tool.id, outcome=StepOutcome.SKIPPED, summary=summary,
+                           detail={"case_id": case.id, "errors": validation.errors})
+            )
             return
 
         if tool.reversible:
