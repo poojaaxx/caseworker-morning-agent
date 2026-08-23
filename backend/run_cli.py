@@ -30,6 +30,7 @@ OUTCOME_LABELS = {
     "escalated": "ESCALATION REQUIRED",
     "handoff": "HUMAN HAND-OFF (ACA-2026/2)",
     "not_processed": "NOT PROCESSED (run cancelled first)",
+    "failed": "UNEXPECTED ERROR",
 }
 
 

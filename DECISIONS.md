@@ -333,6 +333,9 @@ detecting whether it's actually the file we expect.
   the three escalations are unaffected; the remaining nine conservatively hand off.
 - Malformed/missing referral queue file: fails fast with `ReferralQueueError`, not a
   silently-empty or partially-loaded queue.
+- An unexpected exception while processing any single referral (a bug, not a known
+  failure mode) is caught in `run()`'s loop, recorded as `ReferralOutcome.FAILED` with
+  the error message, and does not stop the rest of the queue.
 - Malformed adoption input (missing/ambiguous decision): rejected by the same
   `guardrails.parse_decision` used in Phase 1, at the API boundary (400) and at the
   orchestrator level (`OrchestratorError`) — never treated as approval.
@@ -340,7 +343,7 @@ detecting whether it's actually the file we expect.
 
 ## Testing
 
-73 tests (`pytest`, run from `backend/`), replacing Phase 1's suite, which tested a
+74 tests (`pytest`, run from `backend/`), replacing Phase 1's suite, which tested a
 now-superseded assumption (see "Corrections to Initial Assumptions" — those tests were
 deleted, not silently left to fail; `guardrails.py`'s own logic is unchanged and its
 tests were re-verified as still valid before being folded into the new suite's
@@ -350,8 +353,20 @@ port, not mocked) including unknown-resident and unreachable-service paths; the 
 evaluator against all 12 real referrals plus synthetic edge cases; the ACA-2026/2
 household check against all 12 real referrals plus conservative-default cases; the
 triage guard called directly; the full orchestrator pipeline (escalation/hand-off don't
-stop the queue, hand-off doesn't re-fetch, cancellation preserves partial work); note
-adoption; and the same behaviors again at the HTTP API layer.
+stop the queue, hand-off doesn't re-fetch, cancellation preserves partial work, an
+unexpected exception processing one referral doesn't lose the rest); note adoption; and
+the same behaviors again at the HTTP API layer.
+
+A self-review pass after the domain rewrite (grepping for actual usages, not just
+assuming a module's exports were all load-bearing) found `guardrails.is_authorized()`
+and three model classes (`ApprovalRecord`, `ValidationResult`, `AuditEntry`) were dead
+code — defined, never called or constructed once `adopt_note()` ended up using a
+simpler direct-mutation approach instead of the Phase-1 authorization-table pattern.
+Removed rather than left "for completeness." The same pass found a real gap: `run()`
+had no catch-all around per-referral processing, so a bug while processing one referral
+would have propagated out and lost the recorded outcome for every referral not yet
+reached — fixed with a per-referral try/except and a regression test that simulates
+exactly that.
 
 ## Features Rejected
 

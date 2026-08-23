@@ -220,6 +220,8 @@ do without a human and how that is verified — not what it was told not to do.
   silently accepted).
 - Adopting/declining a note twice, or for a referral that was escalated/handed off
   (no note exists), is rejected (400).
+- An unexpected error processing one referral is recorded against that referral only
+  (`failed`) and does not stop the rest of the queue.
 
 ## Known limitations
 

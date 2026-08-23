@@ -15,6 +15,7 @@ const OUTCOME_LABELS = {
   escalated: "ESCALATION REQUIRED",
   handoff: "HUMAN HAND-OFF (ACA-2026/2)",
   not_processed: "NOT PROCESSED",
+  failed: "UNEXPECTED ERROR",
 };
 
 function renderState(state) {

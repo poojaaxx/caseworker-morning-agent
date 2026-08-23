@@ -93,6 +93,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .result.outcome-escalated { border-left-color: var(--danger); }
 .result.outcome-handoff { border-left-color: var(--warning); }
 .result.outcome-not_processed { border-left-color: var(--muted); }
+.result.outcome-failed { border-left-color: var(--danger); }
 
 .result-header { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
 .badge {
@@ -102,6 +103,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .outcome-autonomous_triaged .badge { background: #dcfce7; color: #166534; }
 .outcome-escalated .badge { background: #fee2e2; color: #991b1b; }
 .outcome-handoff .badge { background: #fef3c7; color: #92400e; }
+.outcome-failed .badge { background: #fee2e2; color: #991b1b; }
 .resident, .requested-action { color: var(--muted); font-size: 0.85rem; }
 
 .trace { font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; font-family: monospace; }
