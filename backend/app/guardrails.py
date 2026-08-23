@@ -1,18 +1,22 @@
-"""The human-approval guardrail: the one boundary normal agent execution cannot cross.
+"""The explicit-decision primitive, reused unchanged from Phase 1.
 
-This module is deliberately small and has no knowledge of specific steps or tools. It
+This module is deliberately small and has no knowledge of any specific domain. It
 answers exactly two questions:
 
   1. Given a raw decision value from the API, is it an unambiguous "approve" or
      "reject"? (parse_decision) Anything else raises - it is never silently treated as
-     approval.
-  2. Given a set of already-recorded approvals for a run, is a specific irreversible
-     action instance authorized to execute right now? (is_authorized)
+     approval. Silence, timeout, "yes", wrong case, wrong type: all rejected.
+  2. Given a set of already-recorded decisions for a run, is a specific action instance
+     authorized right now? (is_authorized)
 
-The orchestrator (orchestrator.py) is the only caller of is_authorized, and it calls it
-immediately before invoking any tool with reversible=False. There is no other path to
-executing an irreversible tool. See DECISIONS.md > "Human Approval / Guardrails" and
-tests/test_guardrails.py::test_irreversible_action_cannot_bypass_approval.
+In Phase 1 this gated execution of an irreversible tool. In the official Problem 5
+domain (see orchestrator.py), the agent has no tool capable of taking a
+supervisor-approval-requiring action at all - see DECISIONS.md > "Structural safety" for
+why that is a stronger guarantee than an approval check could ever provide. This module
+is instead reused for the one place official policy (ACA-2026/1 2.4) does describe an
+explicit human decision: "A drafted [triage] note is a proposal. It has no effect on the
+case until a caseworker adopts it." adopt_note() in orchestrator.py is that decision
+point, and it is the only caller of parse_decision/is_authorized.
 """
 
 from __future__ import annotations
@@ -43,15 +47,14 @@ def parse_decision(raw: object) -> Decision:
 
 
 def is_authorized(
-    approvals: dict[tuple[str, str, Optional[int]], ApprovalRecord],
+    approvals: dict[tuple[str, str, Optional[str]], ApprovalRecord],
     run_id: str,
     step_id: str,
-    target_id: Optional[int],
+    target_id: Optional[str],
 ) -> bool:
     """True only if an explicit APPROVE decision exists for this exact action instance.
 
     No entry, a REJECT entry, or an entry for a different target/step all return False.
-    This is the single choke point irreversible tool execution must pass through.
     """
     record = approvals.get((run_id, step_id, target_id))
     return record is not None and record.decision == Decision.APPROVE

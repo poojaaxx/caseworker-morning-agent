@@ -1,49 +1,66 @@
-"""Optional, isolated LLM interface for the final summary step's narrative text.
+"""Optional, isolated LLM interface for triage-note phrasing.
 
-Per DECISIONS.md > "LLM Usage": the workflow itself is fixed and rule-based (it is
-literally "the same sequence of clicks" every day), so an LLM is not used for planning,
-tool selection, or anything that decides whether an action executes. The only place an
-LLM could add value is turning the deterministic summary data into a friendlier
-paragraph for the caseworker to read - and even there, no LLM output can trigger an
-action; this module is called *after* the workflow has finished executing.
+Per the official problem statement ("the discipline that pays is not hard-coding the
+rules of the policy into the flow of the agent") and DECISIONS.md > "LLM Usage": whether
+a note gets drafted at all is a strictly deterministic decision made by policy.py and
+enforced by triage.py's guard, BEFORE this module is ever called. This module only
+phrases the CONTENT of a draft that has already been authorized - it has no way to
+cause a note to be drafted for a referral the guard has blocked, because triage.py
+never calls it on that path at all (see triage.py's generate_triage_note).
 
 Behavior:
-  - If ANTHROPIC_API_KEY is not set, generate_narrative() returns a deterministic
-    template string built from the summary data. This is the default, so a clean clone
-    with no API key configured still produces a complete, correct summary.
-  - If ANTHROPIC_API_KEY is set, generate_narrative() attempts one call to Claude to
-    phrase the same data as prose. Any failure (network, auth, rate limit, malformed
-    response) falls back to the deterministic template rather than breaking the run -
-    the summary step must never fail just because an optional LLM call failed.
+  - If ANTHROPIC_API_KEY is not set (the default), generate_triage_narrative() returns
+    a deterministic template built from the referral and history data. A clean clone
+    with no API key produces complete, correct triage notes with zero configuration.
+  - If set, it attempts one call to Claude to phrase the same facts as prose. Any
+    failure (network, auth, rate limit, malformed response) falls back to the
+    deterministic template - drafting must never fail just because an optional LLM
+    call failed.
 """
 
 from __future__ import annotations
 
 import os
 
-
-def _deterministic_narrative(summary: dict) -> str:
-    return (
-        f"Morning workflow complete for {summary['run_date']}. "
-        f"{summary['alerts_count']} overnight alert(s) reviewed, "
-        f"{summary['appointments_today']} appointment(s) today, "
-        f"{summary['reminders_sent']} reminder(s) sent, "
-        f"{summary['cases_closed']} case(s) closed, "
-        f"{summary['cases_escalated']} case(s) escalated, "
-        f"{summary['overdue_compliance']} overdue compliance item(s) flagged, "
-        f"{summary['items_skipped']} item(s) skipped due to validation or rejection."
-    )
+from app.models import HistoryFetchOutcome, HistoryFetchResult, Referral
 
 
-def generate_narrative(summary: dict) -> str:
+def _deterministic_narrative(referral: Referral, history: HistoryFetchResult) -> str:
+    lines = [
+        f"Referral {referral.referral_id} ({referral.source}, urgency: {referral.urgency}).",
+        f"Resident {referral.resident_ref}. Requested action: {referral.requested_action}.",
+        f"Summary: {referral.summary}",
+    ]
+    if history.outcome == HistoryFetchOutcome.OK and history.record:
+        rec = history.record
+        lines.append(
+            f"Current status: {rec.status}, benefit {rec.benefit_code}, "
+            f"district {rec.district}, award £{rec.award_monthly:.2f}/month."
+        )
+        lines.append(f"Household size: {len(rec.household)}. Recent events: {len(rec.events)}.")
+    else:
+        lines.append(
+            f"Resident history could not be retrieved ({history.error or history.outcome.value})."
+        )
+    lines.append("Recommended next step: caseworker review per requested action above.")
+    return " ".join(lines)
+
+
+def generate_triage_narrative(referral: Referral, history: HistoryFetchResult) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        return _deterministic_narrative(summary)
+        return _deterministic_narrative(referral, history)
 
     try:  # pragma: no cover - exercised only when an API key is actually configured
         import anthropic  # type: ignore
 
         client = anthropic.Anthropic(api_key=api_key)
+        history_summary = (
+            f"status={history.record.status}, household_size={len(history.record.household)}, "
+            f"recent_events={len(history.record.events)}"
+            if history.outcome == HistoryFetchOutcome.OK and history.record
+            else f"history unavailable: {history.error or history.outcome.value}"
+        )
         response = client.messages.create(
             model="claude-sonnet-5",
             max_tokens=200,
@@ -51,9 +68,14 @@ def generate_narrative(summary: dict) -> str:
                 {
                     "role": "user",
                     "content": (
-                        "Write one short, plain-language paragraph (max 3 sentences) "
-                        "summarizing this caseworker's completed morning workflow for "
-                        f"their own records. Data: {summary}"
+                        "Write a short, plain-language triage note (max 4 sentences) for "
+                        "a caseworker reviewing this referral. State what the situation is "
+                        "and what should happen next. Do not invent facts not given here.\n"
+                        f"Referral: {referral.referral_id}, source: {referral.source}, "
+                        f"urgency: {referral.urgency}\n"
+                        f"Requested action: {referral.requested_action}\n"
+                        f"Summary: {referral.summary}\n"
+                        f"Resident history: {history_summary}"
                     ),
                 }
             ],
@@ -61,6 +83,6 @@ def generate_narrative(summary: dict) -> str:
         text = "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"
         ).strip()
-        return text or _deterministic_narrative(summary)
+        return text or _deterministic_narrative(referral, history)
     except Exception:
-        return _deterministic_narrative(summary)
+        return _deterministic_narrative(referral, history)

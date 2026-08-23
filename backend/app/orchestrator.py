@@ -1,273 +1,297 @@
-"""The agent/orchestrator: drives WORKFLOW step by step and enforces the human-approval
-guardrail before any irreversible tool executes.
+"""The agent: processes the overnight referral queue end to end.
 
-This is the one place that ties workflow.py (what steps exist), guardrails.py (whether
-an irreversible action is authorized), validation.py (whether a target record is even
-usable), and the tools (what each action actually does) together. Everything else in
-the app is either a thin API wrapper around this, or a leaf module this depends on.
+Per-referral pipeline (mirrors the official "morning sequence" and the execution trace
+required by ACA-2026/1 5.1):
 
-Guardrail invariant (see tests/test_guardrails.py):
-    A PerCaseTool with reversible=False can only have execute_one() called from
-    _execute_target(), and _execute_target() for such a tool is only ever reached from
-    _process_target() after guardrails.is_authorized() returned True. There is no other
-    call site. Read _process_target() below to verify this directly.
+    referral_loaded -> history_retrieved -> policy_evaluated
+        -> [ESCALATION_REQUIRED]  -> escalation_created -> referral_completed
+        -> [else] household_evaluated
+              -> [HANDOFF_REQUIRED (3.9)] -> handoff_created -> referral_completed
+              -> [else]                   -> triage_note_drafted -> referral_completed
+
+Every branch is reached from exactly one place (_process_referral below); there is no
+second code path anywhere that calls triage.generate_triage_note or that performs an
+escalation/hand-off. Read this file top to bottom to verify that directly - it is short
+enough to audit in one sitting, which is itself part of the safety argument (see
+DECISIONS.md > "Structural safety").
+
+A referral that ends up ESCALATED or HANDOFF never reaches triage note generation at
+all (4.1: "must not perform the action, must not perform a partial or preparatory
+version of it" - drafting a note is exactly the kind of preparatory step this rules
+out for an escalated referral; 3.9 rules it out directly for a hand-off). Escalating or
+handing off one referral never stops the loop (4.3 / amendment 4.2) - the next referral
+is always attempted regardless of what happened to the previous one.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Optional
+from typing import Any, Optional
 
 from app.db import insert_audit_entry
-from app.guardrails import AmbiguousDecisionError, is_authorized, parse_decision
+from app.guardrails import AmbiguousDecisionError, parse_decision
+from app.history_client import HistoryServiceClient
 from app.models import (
-    ApprovalRecord,
-    Case,
+    ActionVerdict,
     Decision,
-    PendingApproval,
+    EscalationRecord,
+    HandoffRecord,
+    HandoffVerdict,
+    HistoryFetchOutcome,
+    HistoryFetchResult,
+    Referral,
+    ReferralOutcome,
+    ReferralResult,
     RunStatus,
-    StepOutcome,
-    StepResult,
     utc_now_iso,
 )
-from app.tools.base import GlobalTool, PerCaseTool, ToolContext
-from app.validation import validate_case
-from app.workflow import WORKFLOW
+from app.policy import evaluate_household_for_aca_2026_2, evaluate_requested_action
+from app.referrals import load_referral_queue
+from app.triage import TriageBlockedError, generate_triage_note
 
 
-_APPROVAL_META_SUFFIX = "__approval_decision"
+class OrchestratorError(ValueError):
+    """Raised for any invalid request against a run's current state or an adoption
+    decision that is missing, malformed, already-decided, or has no matching draft."""
 
 
-class ApprovalError(ValueError):
-    """Raised for any invalid request against a run's current state: an approval
-    submission with no matching pending action, an already-decided action, a malformed
-    decision (via AmbiguousDecisionError), or an operation attempted on a run that has
-    already finished (completed or cancelled)."""
-
-
-class Orchestrator:
-    def __init__(self, conn: sqlite3.Connection, run_id: str, caseworker: str = "demo-caseworker"):
+class ReferralRunOrchestrator:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        history_client: Optional[HistoryServiceClient] = None,
+        referrals: Optional[list[Referral]] = None,
+    ):
         self.conn = conn
         self.run_id = run_id
-        self.ctx = ToolContext(conn=conn, run_id=run_id, caseworker=caseworker)
+        self.history_client = history_client or HistoryServiceClient()
 
-        self.status: RunStatus = RunStatus.RUNNING
-        self.step_results: list[StepResult] = []
-        self.approvals: dict[tuple[str, str, Optional[int]], ApprovalRecord] = {}
-        self.pending: Optional[PendingApproval] = None
+        self.referrals = referrals if referrals is not None else load_referral_queue()
+        self._queue: list[Referral] = list(self.referrals)
+        self.results: list[ReferralResult] = []
+        self.status = RunStatus.RUNNING
 
-        self._step_index = 0
-        self._target_queue: list[Case] = []
-        self._active_tool: Optional[PerCaseTool] = None
-        self._pending_case: Optional[Case] = None
+    # -- public API -----------------------------------------------------------
 
-    # -- public API ---------------------------------------------------------------
+    def run(self) -> None:
+        """Process the whole queue. Escalating or handing off a referral never stops
+        this loop (ACA-2026/1 4.3, ACA-2026/2 4.2) - only cancel() does."""
+        while self._queue and self.status == RunStatus.RUNNING:
+            referral = self._queue.pop(0)
+            self._process_referral(referral)
+        if self.status == RunStatus.RUNNING:
+            self.status = RunStatus.COMPLETED
 
-    def start(self) -> None:
-        self._advance()
+    def cancel(self, cancelled_by: str = "caseworker") -> None:
+        if self.status != RunStatus.RUNNING:
+            raise OrchestratorError(f"cannot cancel a run that is already {self.status.value}")
 
-    def submit_approval(self, step_id: str, target_id: Optional[int], raw_decision: object,
-                         decided_by: str = "caseworker") -> None:
-        if self.pending is None or self.pending.step_id != step_id or self.pending.target_id != target_id:
-            raise ApprovalError(
-                "no matching pending approval for step_id="
-                f"{step_id!r} target_id={target_id!r}"
-            )
+        for referral in self._queue:
+            self.results.append(ReferralResult(
+                referral=referral, outcome=ReferralOutcome.NOT_PROCESSED,
+                trace=["run_cancelled_before_reached"],
+            ))
+            self._record(referral.referral_id, "run_cancelled", "skipped",
+                          "run cancelled before this referral was reached")
+        self._queue = []
+        self.status = RunStatus.CANCELLED
+        self._record("__run__", "cancel_run", "skipped", f"run cancelled by {cancelled_by}")
 
-        key = (self.run_id, step_id, target_id)
-        if key in self.approvals:
-            raise ApprovalError("this action has already been decided; cannot re-submit")
+    def adopt_note(self, referral_id: str, raw_decision: object,
+                    decided_by: str = "caseworker") -> None:
+        """ACA-2026/1 2.4: 'A drafted note is a proposal. It has no effect on the case
+        until a caseworker adopts it.' This is that decision."""
+        result = self._find_result(referral_id)
+        if result is None or result.triage_note is None:
+            raise OrchestratorError(f"no drafted triage note for {referral_id!r} to adopt")
+        if result.triage_note.adopted is not None:
+            raise OrchestratorError(f"triage note for {referral_id!r} has already been decided")
 
         try:
             decision = parse_decision(raw_decision)
         except AmbiguousDecisionError as exc:
-            # Explicitly never approval. Recorded so the audit trail shows the attempt.
-            # Uses a distinct step_id (suffixed) so it can never be mistaken for a
-            # completed execution of the real step by anything that aggregates the
-            # audit log by (step_id, outcome) - see summary.py's count().
-            self._record(f"{step_id}{_APPROVAL_META_SUFFIX}", target_id, "approval_decision",
-                          StepOutcome.SKIPPED, f"rejected malformed decision input: {exc}")
-            raise ApprovalError(str(exc)) from exc
+            self._record(referral_id, "note_adoption_decision", "skipped",
+                          f"rejected malformed decision input: {exc}")
+            raise OrchestratorError(str(exc)) from exc
 
-        self.approvals[key] = ApprovalRecord(
-            run_id=self.run_id, step_id=step_id, target_id=target_id,
-            decision=decision, decided_at=utc_now_iso(), decided_by=decided_by,
-        )
-        # Meta-record of the decision itself, kept out of the real step's step_id
-        # namespace (see comment above) - it records that a decision was made, not
-        # that the action succeeded.
-        self._record(f"{step_id}{_APPROVAL_META_SUFFIX}", target_id, "approval_decision",
-                      StepOutcome.SUCCESS, f"human decision recorded: {decision.value}")
-
-        case = self._pending_case
-        self.pending = None
-        self._pending_case = None
-        self.status = RunStatus.RUNNING
-
-        if decision == Decision.REJECT:
-            action_name = self._active_tool.name if self._active_tool else step_id
-            summary = "human rejected this irreversible action; not executed"
-            self._record(step_id, target_id, action_name, StepOutcome.REJECTED, summary)
-            self.step_results.append(
-                StepResult(step_id=step_id, outcome=StepOutcome.REJECTED, summary=summary,
-                           detail={"case_id": target_id})
-            )
-        else:
-            assert self._active_tool is not None and case is not None
-            self._execute_target(self._active_tool, case)
-
-        self._advance()
-
-    def cancel(self, cancelled_by: str = "caseworker") -> None:
-        """Stop the run safely, wherever it currently is. Never executes anything as
-        part of cancelling - if an irreversible action was awaiting approval, it is
-        simply abandoned (recorded, not executed), matching "cancelled/interrupted
-        workflow" from the required error-handling scope."""
-        if self.status in (RunStatus.COMPLETED, RunStatus.CANCELLED):
-            raise ApprovalError(f"cannot cancel a run that is already {self.status.value}")
-
-        if self.pending is not None:
-            summary = "run cancelled while this action was awaiting approval; not executed"
-            self._record(self.pending.step_id, self.pending.target_id, "run_cancelled",
-                          StepOutcome.SKIPPED, summary)
-            self.step_results.append(
-                StepResult(step_id=self.pending.step_id, outcome=StepOutcome.SKIPPED,
-                           summary=summary, detail={"case_id": self.pending.target_id})
-            )
-
-        self.pending = None
-        self._pending_case = None
-        self._target_queue = []
-        self.status = RunStatus.CANCELLED
-        self._record("__run__", None, "cancel_run", StepOutcome.SKIPPED,
-                      f"run cancelled by {cancelled_by}")
+        result.triage_note.adopted = decision == Decision.APPROVE
+        self._record(referral_id, "note_adoption_decision", "success",
+                      f"decision={decision.value} by={decided_by}")
 
     def get_state(self) -> dict:
         return {
             "run_id": self.run_id,
             "status": self.status.value,
-            "step_results": [
-                {"step_id": r.step_id, "outcome": r.outcome.value, "summary": r.summary,
-                 "detail": r.detail}
-                for r in self.step_results
-            ],
-            "pending_approval": (
-                {
-                    "step_id": self.pending.step_id,
-                    "target_id": self.pending.target_id,
-                    "action_description": self.pending.action_description,
-                    "reason": self.pending.reason,
-                    "payload": self.pending.payload,
-                }
-                if self.pending else None
+            "summary": self._summary(),
+            "results": [self._result_to_dict(r) for r in self.results],
+        }
+
+    def close(self) -> None:
+        self.history_client.close()
+
+    # -- pipeline ---------------------------------------------------------------
+
+    def _process_referral(self, referral: Referral) -> None:
+        trace: list[str] = []
+
+        trace.append("referral_loaded")
+        self._record(referral.referral_id, "referral_loaded", "success",
+                      f"{referral.referral_id} for resident {referral.resident_ref}")
+
+        history = self.history_client.get_full_record(referral.resident_ref)
+        history_ok = history.outcome == HistoryFetchOutcome.OK
+        trace.append("history_retrieved" if history_ok else "history_retrieval_failed")
+        self._record(
+            referral.referral_id, "history_retrieved",
+            "success" if history_ok else "failed",
+            f"outcome={history.outcome.value}" + (f"; {history.error}" if history.error else ""),
+        )
+
+        action_decision = evaluate_requested_action(referral)
+        trace.append("policy_evaluated")
+        basis_text = f" basis={action_decision.basis.reference}" if action_decision.basis else ""
+        self._record(referral.referral_id, "policy_evaluated", "success",
+                      f"verdict={action_decision.verdict.value}{basis_text}")
+
+        if action_decision.verdict == ActionVerdict.ESCALATION_REQUIRED:
+            assert action_decision.basis is not None
+            trace += ["escalation_required", "action_blocked", "escalation_created"]
+            record = EscalationRecord(
+                referral_id=referral.referral_id, resident_ref=referral.resident_ref,
+                basis=action_decision.basis, context=self._context(referral, history),
+            )
+            self._record(referral.referral_id, "escalation_created", "escalated",
+                          f"{action_decision.basis.reference}: {action_decision.basis.explanation}")
+            self.results.append(ReferralResult(
+                referral=referral, outcome=ReferralOutcome.ESCALATED, trace=trace,
+                history_ok=history_ok, escalation=record,
+            ))
+            self._record(referral.referral_id, "referral_completed", "escalated",
+                          "processing complete (escalated)")
+            return
+
+        handoff_decision = evaluate_household_for_aca_2026_2(history, referral.received_date)
+        trace.append("household_evaluated")
+        hbasis = f" basis={handoff_decision.basis.reference}" if handoff_decision.basis else ""
+        self._record(referral.referral_id, "household_evaluated", "success",
+                      f"verdict={handoff_decision.verdict.value}{hbasis}")
+
+        if handoff_decision.verdict == HandoffVerdict.HANDOFF_REQUIRED:
+            assert handoff_decision.basis is not None
+            trace += ["under_18_detected" if handoff_decision.household_established
+                      else "household_unknown", "ACA-2026/2_applied", "triage_generation_blocked",
+                      "handoff_created"]
+            record = HandoffRecord(
+                referral_id=referral.referral_id, resident_ref=referral.resident_ref,
+                basis=handoff_decision.basis, context=self._context(referral, history),
+            )
+            self._record(
+                referral.referral_id, "handoff_created", "handoff",
+                f"TRIAGE NOTE NOT GENERATED. Reason: {handoff_decision.basis.reference} "
+                f"({handoff_decision.basis.explanation})",
+            )
+            self.results.append(ReferralResult(
+                referral=referral, outcome=ReferralOutcome.HANDOFF, trace=trace,
+                history_ok=history_ok, handoff=record,
+            ))
+            self._record(referral.referral_id, "referral_completed", "handoff",
+                          "processing complete (hand-off)")
+            return
+
+        try:
+            note = generate_triage_note(referral, history, handoff_decision)
+        except TriageBlockedError as exc:
+            # Unreachable given the check above; if it ever fires, treat it exactly
+            # like a hand-off rather than silently losing the referral.
+            trace.append("triage_generation_blocked")
+            self._record(referral.referral_id, "triage_generation_blocked", "handoff", str(exc))
+            self.results.append(ReferralResult(
+                referral=referral, outcome=ReferralOutcome.HANDOFF, trace=trace,
+                history_ok=history_ok,
+                handoff=HandoffRecord(referral.referral_id, referral.resident_ref,
+                                       handoff_decision.basis or _fallback_basis(),
+                                       self._context(referral, history)),
+            ))
+            return
+
+        trace.append("triage_note_drafted")
+        self._record(referral.referral_id, "triage_note_drafted", "success", note.narrative)
+        self.results.append(ReferralResult(
+            referral=referral, outcome=ReferralOutcome.AUTONOMOUS_TRIAGED, trace=trace,
+            history_ok=history_ok, triage_note=note,
+        ))
+        self._record(referral.referral_id, "referral_completed", "success",
+                      "processing complete (autonomous)")
+
+    # -- helpers ------------------------------------------------------------
+
+    def _context(self, referral: Referral, history: HistoryFetchResult) -> dict[str, Any]:
+        """ACA-2026/1 4.2 / ACA-2026/2 3.2: carry enough context that a supervisor or
+        caseworker does not have to re-read the case from the beginning."""
+        ctx: dict[str, Any] = {
+            "referral_id": referral.referral_id,
+            "resident_ref": referral.resident_ref,
+            "source": referral.source,
+            "summary": referral.summary,
+            "requested_action": referral.requested_action,
+            "urgency": referral.urgency,
+            "received_at": referral.received_at.isoformat(),
+        }
+        if history.outcome == HistoryFetchOutcome.OK and history.record:
+            rec = history.record
+            ctx["resident_status"] = rec.status
+            ctx["household"] = [
+                {"name": m.name, "date_of_birth": m.date_of_birth, "relationship": m.relationship}
+                for m in rec.household
+            ]
+            ctx["recent_events"] = rec.events[-5:]
+        else:
+            ctx["history_retrieval_error"] = history.error or history.outcome.value
+        return ctx
+
+    def _find_result(self, referral_id: str) -> Optional[ReferralResult]:
+        for r in self.results:
+            if r.referral.referral_id == referral_id:
+                return r
+        return None
+
+    def _summary(self) -> dict[str, int]:
+        counts = {o.value: 0 for o in ReferralOutcome}
+        for r in self.results:
+            counts[r.outcome.value] += 1
+        return counts
+
+    def _result_to_dict(self, r: ReferralResult) -> dict:
+        return {
+            "referral_id": r.referral.referral_id,
+            "resident_ref": r.referral.resident_ref,
+            "requested_action": r.referral.requested_action,
+            "outcome": r.outcome.value,
+            "trace": r.trace,
+            "history_ok": r.history_ok,
+            "triage_note": (
+                {"narrative": r.triage_note.narrative, "adopted": r.triage_note.adopted}
+                if r.triage_note else None
+            ),
+            "escalation": (
+                {"basis": r.escalation.basis.reference, "explanation": r.escalation.basis.explanation}
+                if r.escalation else None
+            ),
+            "handoff": (
+                {"basis": r.handoff.basis.reference, "explanation": r.handoff.basis.explanation}
+                if r.handoff else None
             ),
         }
 
-    # -- internal driver loop ------------------------------------------------------
-
-    def _advance(self) -> None:
-        while self.status == RunStatus.RUNNING:
-            if self._target_queue:
-                case = self._target_queue.pop(0)
-                self._process_target(self._active_tool, case)
-                continue
-
-            if self._step_index >= len(WORKFLOW):
-                self.status = RunStatus.COMPLETED
-                return
-
-            tool = WORKFLOW[self._step_index].tool
-            self._step_index += 1
-            self._start_step(tool)
-
-    def _start_step(self, tool) -> None:
-        if isinstance(tool, GlobalTool):
-            self._run_global_tool(tool)
-            return
-
-        assert isinstance(tool, PerCaseTool)
-        self._active_tool = tool
-        try:
-            self._target_queue = list(tool.get_targets(self.ctx))
-        except Exception as exc:  # dependency failure while selecting targets
-            summary = f"failed to determine targets: {exc}"
-            self._record(tool.id, None, tool.name, StepOutcome.FAILED, summary)
-            self.step_results.append(
-                StepResult(step_id=tool.id, outcome=StepOutcome.FAILED, summary=summary)
-            )
-            self._target_queue = []
-
-    def _run_global_tool(self, tool: GlobalTool) -> None:
-        try:
-            result = tool.execute(self.ctx)
-        except Exception as exc:
-            self._record(tool.id, None, tool.name, StepOutcome.FAILED, f"unhandled error: {exc}")
-            self.step_results.append(
-                StepResult(step_id=tool.id, outcome=StepOutcome.FAILED, summary=str(exc))
-            )
-            return
-
-        self._record(tool.id, None, tool.name, result.outcome, result.summary, result.detail)
-        self.step_results.append(
-            StepResult(step_id=tool.id, outcome=result.outcome, summary=result.summary,
-                       detail=result.detail)
-        )
-
-    def _process_target(self, tool: PerCaseTool, case: Case) -> None:
-        validation = validate_case(case)
-        if not validation.is_valid:
-            summary = f"skipped case #{case.id}: validation failed ({validation.errors})"
-            self._record(tool.id, case.id, tool.name, StepOutcome.SKIPPED, summary)
-            self.step_results.append(
-                StepResult(step_id=tool.id, outcome=StepOutcome.SKIPPED, summary=summary,
-                           detail={"case_id": case.id, "errors": validation.errors})
-            )
-            return
-
-        if tool.reversible:
-            self._execute_target(tool, case)
-            return
-
-        if is_authorized(self.approvals, self.run_id, tool.id, case.id):
-            self._execute_target(tool, case)
-            return
-
-        description, reason = tool.describe_action(self.ctx, case)
-        self.pending = PendingApproval(
-            run_id=self.run_id, step_id=tool.id, target_id=case.id,
-            action_description=description, reason=reason,
-            payload={"case_id": case.id, "client_name": case.client_name},
-        )
-        self._pending_case = case
-        self._record(tool.id, case.id, tool.name, StepOutcome.PENDING_APPROVAL,
-                      f"awaiting human approval: {description}")
-        self.status = RunStatus.AWAITING_APPROVAL
-
-    def _execute_target(self, tool: PerCaseTool, case: Case) -> None:
-        try:
-            result = tool.execute_one(self.ctx, case)
-        except Exception as exc:
-            self._record(tool.id, case.id, tool.name, StepOutcome.FAILED, f"unhandled error: {exc}")
-            self.step_results.append(
-                StepResult(step_id=tool.id, outcome=StepOutcome.FAILED, summary=str(exc),
-                           detail={"case_id": case.id})
-            )
-            return
-
-        self._record(tool.id, case.id, tool.name, result.outcome, result.summary, result.detail)
-        self.step_results.append(
-            StepResult(step_id=tool.id, outcome=result.outcome, summary=result.summary,
-                       detail=result.detail)
-        )
-
-    # -- audit ------------------------------------------------------------------
-
-    def _record(self, step_id: str, target_id: Optional[int], action: str,
-                outcome: StepOutcome, summary: str, detail: Optional[dict] = None) -> None:
-        payload = dict(detail or {})
-        payload.setdefault("summary", summary)
+    def _record(self, target_id: str, action: str, outcome: str, detail: str) -> None:
         insert_audit_entry(
-            self.conn, self.run_id, utc_now_iso(), step_id, target_id, action,
-            outcome.value, json.dumps(payload, default=str),
+            self.conn, self.run_id, utc_now_iso(), action, target_id, action, outcome,
+            json.dumps({"detail": detail}, default=str),
         )
+
+
+def _fallback_basis():
+    from app.models import PolicyBasis
+    return PolicyBasis("ACA-2026/1 3.9", "drafting blocked")

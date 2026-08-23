@@ -1,0 +1,47 @@
+{
+  "_comment": "Our structured translation of data-pack/authority-policy.md (ACA-2026/1) section 3 into matchable rules, so amending which categories of requested action require escalation is a data edit here, not a code change in policy.py. The prose document remains the authoritative source of truth for a human reader; this file is what the evaluator actually executes against it.",
+
+  "restricted_action_rules": [
+    {
+      "section": "ACA-2026/1 3.2",
+      "keywords": ["suspend", "terminat", "reinstat"],
+      "description": "Suspension, termination, or reinstatement of an award."
+    },
+    {
+      "section": "ACA-2026/1 3.4",
+      "keywords": ["payment details", "bank details", "card details", "account details"],
+      "description": "Any change to payment details, including bank or card details."
+    },
+    {
+      "section": "ACA-2026/1 3.6",
+      "keywords": ["disclos"],
+      "description": "Disclosure of resident information to any party outside the Department."
+    },
+    {
+      "section": "ACA-2026/1 3.7",
+      "keywords": ["record a finding of fraud", "confirm fraud", "record finding of misrepresentation"],
+      "description": "Creation of a record asserting a finding of fact about a resident's conduct, including suspected fraud or misrepresentation."
+    }
+  ],
+
+  "communication_rule": {
+    "section": "ACA-2026/1 3.5",
+    "verbs": ["send", "notify", "inform"],
+    "targets": ["resident", "third party", "third-party"],
+    "excluded_verbs": ["draft"],
+    "description": "Any communication sent to a resident or to a third party."
+  },
+
+  "change_verb_noun_rule": {
+    "section": "ACA-2026/1 3.1",
+    "verbs": ["change", "alter", "adjust", "amend"],
+    "nouns": ["award", "entitlement", "eligibility", "benefit"],
+    "description": "Any change to a resident's entitlement, award amount, or eligibility status."
+  },
+
+  "autonomous_verbs": [
+    "review", "record", "draft", "flag", "categorise", "categorize", "prioritise", "prioritize"
+  ],
+
+  "ambiguous_default_section": "ACA-2026/1 6.1"
+}
