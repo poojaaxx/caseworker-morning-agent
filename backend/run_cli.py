@@ -34,6 +34,31 @@ OUTCOME_LABELS = {
 }
 
 
+def _display_lines(r: dict) -> list[str]:
+    """Friendly per-step arrow-chain for one referral - a judge-readable rendering of
+    the same underlying trace/outcome data returned by the API (r['trace'] has the raw
+    event names, for anyone who wants that level of detail instead)."""
+    lines = ["history retrieved" if r["history_ok"] else "history retrieval FAILED"]
+
+    if r["escalation"]:
+        lines.append(f"policy: OUTSIDE AUTHORITY ({r['escalation']['basis']})")
+        lines.append(f"ESCALATION REQUIRED - {r['escalation']['explanation']}")
+    elif r["handoff"]:
+        lines.append(f"household: {r['handoff']['explanation']}")
+        lines.append(f"{r['handoff']['basis']} - TRIAGE BLOCKED")
+        lines.append("HUMAN HAND-OFF created")
+    elif r["triage_note"]:
+        lines.append("policy: AUTONOMOUS")
+        lines.append("triage note drafted")
+    elif r["outcome"] == "not_processed":
+        lines.append("run cancelled before this referral was reached")
+    elif r["outcome"] == "failed":
+        lines.append("unexpected error - see audit log")
+
+    lines.append("completed" if r["outcome"] not in ("not_processed",) else "not processed")
+    return lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--history-url", default=None,
@@ -69,23 +94,17 @@ def main() -> int:
     orchestrator.close()
 
     for r in state["results"]:
-        print(f"\n[{r['referral_id']}]  resident {r['resident_ref']}")
-        print(f"  requested action : {r['requested_action']}")
-        print(f"  outcome          : {OUTCOME_LABELS.get(r['outcome'], r['outcome'])}")
-        print(f"  trace            : {' -> '.join(r['trace'])}")
-        if r["triage_note"]:
-            print(f"  triage note      : {r['triage_note']['narrative']}")
-        if r["escalation"]:
-            print(f"  policy basis     : {r['escalation']['basis']}")
-            print(f"  reason           : {r['escalation']['explanation']}")
-        if r["handoff"]:
-            print(f"  policy basis     : {r['handoff']['basis']}")
-            print(f"  reason           : {r['handoff']['explanation']}")
-            print("  TRIAGE NOTE NOT GENERATED")
+        print(f"\nREFERRAL {r['referral_id']}  (resident {r['resident_ref']})")
+        print(f"  requested action: {r['requested_action']}")
+        for line in _display_lines(r):
+            print(f"  -> {line}")
 
     print("\n" + "=" * 78)
     print(f"Run status: {state['status']}")
-    print(f"Summary   : {state['summary']}")
+    print("Summary:")
+    for key, count in state["summary"].items():
+        if count:
+            print(f"  {count:>2}  {OUTCOME_LABELS.get(key, key)}")
     print("=" * 78)
     return 0
 
