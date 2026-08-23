@@ -2,73 +2,97 @@
 
 ## Problem
 
-> A caseworker spends the first forty minutes of every day on the same sequence of
-> clicks. Build an agent that performs the whole sequence end to end and stops to ask a
-> human before doing anything that cannot be undone.
+> A caseworker starts every day the same way: check the referrals that came in
+> overnight, pull each resident's history, and draft a triage note on what should
+> happen next. None of it is difficult, all of it is necessary, and it happens before
+> the caseworker has done anything that needs their actual judgement.
+>
+> Build an agent that performs that sequence end to end, and stops at the right
+> moments — where "the right moments" are defined by a written authority policy, not
+> invented by the agent. At least one referral in the queue asks for something outside
+> the agent's authority. Recognising it, refusing it, escalating it, and carrying on
+> with the rest is part of the floor, not a bonus.
 
-This is Brite Spark 2026 Problem 5 (Agentic AI / Guardrails). No official Problem 5 data
-pack was provided for this build — the workspace was empty apart from this statement, so
-the specific "sequence of clicks" modeled below is a documented assumption, not an
-official spec. See [DECISIONS.md](DECISIONS.md) for the full reasoning.
+This is Brite Spark 2026 Problem 5 (Agentic AI / Guardrails), built against the
+official data pack supplied for the problem (`data-pack/`) — see
+[`data-pack/README.md`](data-pack/README.md), [`data-pack/authority-policy.md`](data-pack/authority-policy.md)
+(policy **ACA-2026/1**), and [`data-pack/amendment-ACA-2026-2.md`](data-pack/amendment-ACA-2026-2.md)
+(the Day-2 amendment, **ACA-2026/2**).
 
 ## Solution
 
-An agent (orchestrator) runs a fixed, ordered 9-step morning workflow against a mock
-case-management database: checking alerts, triaging the case queue, checking the
-calendar, pulling case files, sending appointment reminders, flagging overdue
-compliance, closing resolved cases, escalating urgent cases, and generating a summary.
+An agent processes the official 12-referral overnight queue end to end. For each
+referral it:
 
-Three of those steps are **irreversible** (sending a message to a client, closing a
-case, escalating a case to a supervisor). Before executing any of them, the agent stops
-and asks a human for an explicit `approve`/`reject` decision. This gate is enforced in
-the orchestrator's code path itself — there is no route to executing an irreversible
-tool without a matching, explicit approval record. See
-[`backend/app/orchestrator.py`](backend/app/orchestrator.py) and
-[`backend/app/guardrails.py`](backend/app/guardrails.py).
+1. Reads the referral (ACA-2026/1 §2.1).
+2. Retrieves the resident's history, household, and case events from the official
+   Resident History API (§2.2).
+3. Evaluates the referral's requested action against ACA-2026/1 §3: does it require
+   supervisor approval (a change to entitlement/award, suspension/termination/
+   reinstatement, a payment-details change, a communication, a disclosure, a fraud/
+   misrepresentation finding, or anything ambiguous — §6.1 treats "unclear" as "yes")?
+   - **Yes** → the agent does not perform it, does not draft anything, and creates an
+     **escalation** with full context (§4). Processing continues with the next referral.
+   - **No** → continue to step 4.
+4. Evaluates the household for ACA-2026/2 §3.9: does it include a person under 18?
+   - **Yes** (or household composition cannot be established) → the agent does **not**
+     draft a triage note at all — not even a partial or "for review" one — and instead
+     creates a **hand-off**, preserving everything already retrieved. Processing
+     continues with the next referral.
+   - **No** → draft a triage note (§2.4): a proposal with no effect until a caseworker
+     adopts it.
+
+Every step, decision, and outcome is written to a full execution trace (§5.1).
 
 ## Key features
 
-- End-to-end agent workflow over a 9-step caseworker morning routine
-- Workflow/orchestration layer separate from tools, validation, and guardrail policy
-- Human-in-the-loop approval gate for irreversible actions, enforced in code
-- Per-record validation (missing/malformed/invalid-state data is flagged, not guessed at)
-- Failure handling for a simulated unavailable dependency, without crashing the run
-- Full audit log of every step, decision, and outcome, persisted to SQLite
-- Safe cancellation of an in-progress run at any point, including while an irreversible
-  action is awaiting approval (the action is abandoned, never executed)
-- Minimal web UI for running the demo end to end
+- End-to-end agent run over the official 12-referral queue
+- Policy-driven evaluation (ACA-2026/1 §2–§4, §6.1), rules kept as data
+  (`backend/app/policy_rules.json`), not hardcoded per-referral branches
+- Structural drafting guard for ACA-2026/2 §3.9 (see "Structural safety" below)
+- Clear, tested distinction between **escalation** and **hand-off**
+- Escalating or handing off one referral never stops the rest of the queue
+- Partial-work preservation: history/household data already retrieved for a referral
+  is reused for its hand-off record, never discarded or re-fetched
+- Full execution trace, both as plain stdout (`run_cli.py`) and via the API/audit log
+- Safe run cancellation
+- Optional caseworker note-adoption step (approve/reject), reusing a generic,
+  independently-tested explicit-decision primitive (never treats silence, timeout, or
+  an ambiguous response as approval)
 
 ## Architecture
 
 ```
-Caseworker (browser)
-        |
-        v
-   FastAPI app (backend/app/main.py)  <-- serves API (/api/*) and static UI (/)
-        |
-        v
-   Orchestrator (orchestrator.py)  -- drives WORKFLOW step by step
-        |
-        +--> workflow.py        (ordered list of steps - the "sequence of clicks")
-        +--> tools/*.py          (one Tool per action; declares reversible: bool)
-        +--> validation.py       (per-record validation rules)
-        +--> guardrails.py       (parses/authorizes human approval decisions)
-        +--> db.py                (SQLite: case records + audit log)
-        +--> llm.py                (optional, isolated - only phrases the final summary)
+data-pack/                     official files, unmodified (referral queue, policy,
+                                history service + data, ACA-2026/2 amendment)
+backend/app/
+  referrals.py                 loads the official queue (read-only)
+  history_client.py            HTTP client for the official Resident History API
+  policy.py + policy_rules.json  ACA-2026/1 evaluator (autonomous / escalation)
+                                and ACA-2026/2 evaluator (household / hand-off)
+  triage.py                    drafts a note, or refuses (ACA-2026/2 guard)
+  llm.py                       optional, isolated note-phrasing (see "LLM usage")
+  orchestrator.py               per-referral pipeline + execution trace + audit log
+  guardrails.py                explicit approve/reject decision primitive
+  db.py                        SQLite audit log
+  main.py                      FastAPI app (JSON API + serves frontend/)
+run_cli.py                     stdout execution-trace runner (no API/UI needed)
+frontend/                      minimal demo UI (not required for this problem)
 ```
 
-Each irreversible tool's `execute_one()` is only ever called from one place in
-`orchestrator.py`, immediately after `guardrails.is_authorized()` returns `True` for
-that exact action instance. See `DECISIONS.md > Human Approval / Guardrails`.
+Extension points for a future policy change: a new restricted-action category or
+keyword → edit `policy_rules.json` (data, not code); a new workflow step → add it to
+`orchestrator.py`'s pipeline; a new tool/action → add a module next to `triage.py`; a
+new data source → add a client next to `history_client.py`.
 
 ## Technology stack
 
-- Python 3.11, FastAPI, SQLite (stdlib `sqlite3`)
-- Plain HTML/CSS/JavaScript frontend (no build step, no framework)
+- Python 3.11, FastAPI, SQLite (stdlib `sqlite3`), httpx
+- The official history service: Python 3 standard library only (`data-pack/services/`)
+- Plain HTML/CSS/JavaScript frontend (no build step, no framework — and not required
+  for this problem; see "Not required" in `data-pack/README.md`'s companion problem
+  statement)
 - pytest for automated tests
-
-No LLM, database server, queue, or container orchestration is required to run this
-project. See `DECISIONS.md > Technology Decisions` for why.
 
 ## Prerequisites
 
@@ -93,95 +117,130 @@ pip install -r requirements.txt
 
 ## Configuration
 
-No configuration is required to run the project. Optionally, export `ANTHROPIC_API_KEY`
-in your shell before starting the server to let the final "generate daily summary" step
-phrase its summary via an LLM call instead of a deterministic template — everything
-else about the workflow is unaffected either way (see `DECISIONS.md > LLM Usage`). The
-app does not read a `.env` file; if unset (the default), the summary step uses its
-deterministic template and the project runs with zero configuration. Never commit a
-real API key.
+No configuration is required. Optionally export `ANTHROPIC_API_KEY` to let triage
+notes be phrased by an LLM instead of a deterministic template (see "LLM usage"
+below) — everything else runs identically either way. `HISTORY_SERVICE_URL` can
+override the resident-history API base URL (default `http://127.0.0.1:8083`); the
+test suite sets this itself to a disposable instance and does not need it set
+manually.
+
+## Running the history service
+
+The agent calls the official Resident History API over HTTP, so it must be running
+first, in its own terminal:
+
+```bash
+python data-pack/services/history_service.py --port 8083
+```
+
+This is the organizers' unmodified script (`GET /residents/<ref>`,
+`/residents/<ref>/household`, `/residents/<ref>/events`, `/health`) — see
+`data-pack/README.md`.
 
 ## Run instructions
 
-From `backend/`, with the virtual environment activated:
+### Plain stdout trace (no other setup)
+
+With the history service running, from `backend/` with the virtualenv activated:
+
+```bash
+python run_cli.py
+```
+
+Prints every referral's outcome, policy basis, and full trace directly to the
+terminal. This alone satisfies the problem's traceability requirement — see "Not
+required" in the official problem statement: a UI is not needed.
+
+### API + minimal frontend
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Then open **http://127.0.0.1:8000** in a browser. The database is created and seeded
-automatically on first run (`data/caseworker.db`, gitignored).
+Then open **http://127.0.0.1:8000**, or use the API directly: `POST /api/runs` starts
+a run and processes the whole queue; `GET /api/runs/{id}` returns its state;
+`POST /api/runs/{id}/referrals/{referral_id}/adopt` (body `{"decision": "approve"}` or
+`"reject"`) adopts or declines a drafted note; `POST /api/runs/{id}/cancel` cancels an
+in-progress run; `GET /api/runs/{id}/audit` returns the full audit trail.
 
 ## Test instructions
 
-From `backend/`, with the virtual environment activated:
+The test suite starts its own disposable copy of the official history service — no
+manual setup needed. From `backend/`, with the virtual environment activated:
 
 ```bash
 pytest
 ```
 
+(Takes roughly two minutes: many tests run the full 12-referral pipeline against the
+real service, which has built-in simulated per-request latency by design — see
+`data-pack/services/history_service.py`'s docstring.)
+
 ## Example workflow
 
-1. Open http://127.0.0.1:8000 and click **Start morning workflow**.
-2. The agent runs alert checks, queue triage, calendar check, and case-file pull
-   automatically (all reversible/read-only steps).
-3. It stops at the first irreversible action (e.g. sending an appointment reminder) and
-   shows the proposed action, the affected case, and why approval is required.
-4. Approve or reject. The agent continues to the next action needing a decision, then
-   proceeds through the remaining reversible steps and produces a final summary.
-5. The full audit trail (every step, decision, and outcome) is visible in the UI and via
-   `GET /api/runs/{run_id}/audit`.
+```bash
+python data-pack/services/history_service.py --port 8083   # terminal 1
+python run_cli.py                                            # terminal 2
+```
 
-## Human approval example
+`run_cli.py` prints all 12 referrals: which were drafted autonomously, which were
+escalated (with the exact policy section and reason), and which were handed off under
+ACA-2026/2 (with "TRIAGE NOTE NOT GENERATED" made explicit).
 
-When the agent reaches `send_appointment_reminders`, `close_resolved_cases`, or
-`escalate_urgent_case` for a given case, it pauses the run (`status: awaiting_approval`)
-and returns the pending action instead of executing it. The only way to make it proceed
-is `POST /api/runs/{run_id}/approvals` with a body containing
-`"decision": "approve"` or `"decision": "reject"` — anything else (missing, empty,
-`"yes"`, wrong case, wrong type) is rejected by the API with a 400 and the run stays
-paused. A rejected action is recorded and never executed; the run continues to whatever
-comes next.
+## Human approval / escalation / hand-off
+
+There is no "propose an out-of-authority action, then a human approves it, then the
+agent executes it" flow in this system — see **Structural safety** below for why that
+is a stronger guarantee, not a missing feature. What ACA-2026/1 §2.4 does describe is
+a human decision: a drafted triage note is a proposal with no effect until a
+caseworker **adopts** it. That is the one place this system asks for an explicit
+human decision (`POST .../adopt`, body `{"decision": "approve"}` or `"reject"}`).
+Anything else — missing, empty, wrong case, wrong type, `"yes"` — is rejected by the
+same explicit-decision primitive used throughout (`guardrails.py`) and never treated
+as approval.
+
+## Structural safety
+
+`DECISIONS.md` → **"Structural safety"** states, precisely, what this codebase cannot
+do without a human and how that is verified — not what it was told not to do.
 
 ## Failure behavior
 
-- A simulated case-file storage outage (one seeded case) is caught per-record; that
-  step reports `partial` with the failure visible in its detail, and the rest of the
-  run continues.
-- Records that fail validation (missing client name, unparseable dates, unknown status)
-  are skipped for the steps that need valid data, with the reason recorded in the audit
-  log — never silently treated as valid.
-- Malformed or ambiguous approval input is rejected by the guardrail layer itself, not
-  just the UI, and is never treated as approval.
-- Re-submitting a decision for an already-decided action is rejected (no duplicate
-  execution).
-- Unhandled tool exceptions are caught at the orchestrator level and recorded as a
-  failed step; the run never reports success after a failure.
-- A run can be cancelled at any point via `POST /api/runs/{run_id}/cancel`. If an
-  irreversible action was awaiting approval when cancelled, it is recorded as abandoned
-  and never executed. Cancelling an already-completed or already-cancelled run is
-  rejected (400) rather than silently accepted.
+- History service unreachable or a resident not found: recorded, never crashes the
+  run; referrals whose action would otherwise be autonomous conservatively hand off
+  (ACA-2026/2 §5.2), while escalation-required referrals are unaffected (their
+  classification does not depend on history data).
+- Malformed date of birth for a household member: treated conservatively as hand-off,
+  same as an unreachable service.
+- Malformed/missing referral queue file: the run fails fast with a clear error rather
+  than silently processing a partial or invented queue.
+- Cancelling a run preserves every referral already processed and marks the rest
+  `not_processed` — nothing already done is discarded or repeated.
+- An already-completed or already-cancelled run cannot be cancelled again (400, not
+  silently accepted).
+- Adopting/declining a note twice, or for a referral that was escalated/handed off
+  (no note exists), is rejected (400).
 
 ## Known limitations
 
-- In-memory run state: an in-progress run does not survive a backend restart. Completed
-  side effects (case closures, escalations, reminders already sent) are not lost or
-  re-applied, because they and the audit log are written to SQLite as they happen —
-  only that run's current position is lost.
-- The specific 9-step workflow is a documented assumption (see Problem section above),
-  not sourced from an official Problem 5 data pack.
-- Single-process, single-caseworker demo; not built for concurrent multi-caseworker load.
-- "Sends" and "escalations" are simulated and logged, not delivered to any real
-  messaging/notification system.
+- The 12-referral queue and history data are the official, fixed dataset supplied
+  with the problem — this system does not generalize to referral types beyond it (the
+  official problem statement explicitly does not require that).
+- Run state lives in-memory in the FastAPI process; the audit log (SQLite) and every
+  referral's result are what survive a restart, not an in-progress run's position.
+- `policy_rules.json`'s keyword rules are our own structured translation of the prose
+  policy (see `DECISIONS.md` → "Policy as data") — a genuinely novel restricted-action
+  category would need a new rule added to that file, not full NLU.
+- "Sending" a communication, changing payment details, etc. are not implemented at
+  all (see Structural safety) — this system escalates them, it does not simulate
+  performing them.
 
 ## Future improvements
 
-See `DECISIONS.md > What We Would Improve First`.
+See `DECISIONS.md` → "What We Would Improve First."
 
 ## Clean clone verification
 
-This project was verified by running the exact steps above from a fresh `git clone`
-into an empty directory, on a machine that already had Python 3.11 and git installed:
-`git clone` → `python -m venv .venv` → `pip install -r requirements.txt` → `pytest`
-(44 passed) → `uvicorn app.main:app` → confirmed `/api/health` and `/` both respond.
-No undocumented steps were needed.
+Verified by running exactly the steps above (`git clone` → venv → `pip install` →
+start the history service → `pytest` → `python run_cli.py`) from a fresh clone in an
+empty directory. See `DECISIONS.md` for the specific run log.

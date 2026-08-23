@@ -22,5 +22,24 @@ nothing generated was committed without being read and tested first. No AI model
 system — see DECISIONS.md ("Human Approval / Guardrails" and "LLM Usage") for how that
 boundary is enforced in code.
 
-This file will be updated if additional AI assistance (e.g., for the Day-2 surprise
-requirement) is used.
+## Phase 2 (official data pack + Day-2 surprise)
+
+The same AI assistance (Claude, Anthropic) continued for Phase 2: reading and analyzing
+the official data pack (`data-pack/authority-policy.md`, `referral-queue.json`, the
+history service) and the Day-2 amendment (`ACA-2026/2`) supplied for this problem;
+deriving the referral-by-referral policy classification by hand against the policy text
+(recorded in `DECISIONS.md`); implementing the policy evaluator, history-service client,
+triage-drafting guard, and rewritten orchestrator; rewriting the test suite against the
+real official history service; and updating all three required documents.
+
+All classification decisions (which referrals escalate, which hand off) were verified
+programmatically against the real official service and data before being written up in
+`DECISIONS.md` and encoded as test assertions — they were not asserted from the AI's
+reasoning alone without checking them against the actual data pack. One reasoning
+mistake was caught and corrected during development (an over-broad keyword rule nearly
+misclassified RF-2026-0418 as a policy-3.1 match by scanning free text for "chang-" and
+matching "award changes" in a question rather than a request) — see `DECISIONS.md` →
+"Agent Design / Workflow" for the specific fix, kept in the record rather than silently
+corrected.
+
+This file will be updated further if additional AI assistance is used.
