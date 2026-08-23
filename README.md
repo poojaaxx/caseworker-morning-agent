@@ -3,14 +3,49 @@
 > An agentic workflow that automates repetitive caseworker morning processing while
 > enforcing human approval and authority-aware guardrails.
 
-![Python](https://img.shields.io/badge/python-3.11-blue)
-![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
-![pytest](https://img.shields.io/badge/tests-83%20passing-brightgreen)
-![Render](https://img.shields.io/badge/deployed%20on-Render-46E3B7)
+[![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
+[![pytest](https://img.shields.io/badge/tests-83%20passing-brightgreen)](https://github.com/poojaaxx/caseworker-morning-agent)
+[![Render](https://img.shields.io/badge/deployed%20on-Render-46E3B7)](https://caseworker-morning-agent.onrender.com/)
+
+<p align="center">
+  <a href="https://caseworker-morning-agent.onrender.com/">
+    <img src="https://img.shields.io/badge/🚀_LIVE_DEMO-Try_it_now-blue?style=for-the-badge" alt="Live Demo" />
+  </a>
+  <a href="https://caseworker-morning-agent.onrender.com/docs">
+    <img src="https://img.shields.io/badge/📚_API_DOCS-Swagger-009688?style=for-the-badge" alt="API Docs" />
+  </a>
+  <a href="https://github.com/poojaaxx/caseworker-morning-agent">
+    <img src="https://img.shields.io/badge/💻_GITHUB-Source-181717?style=for-the-badge" alt="GitHub" />
+  </a>
+</p>
 
 Built for **Brite Spark 2026, Problem 5 (Agentic AI / Guardrails)**, against the
 official supplied data pack — the fixed 12-referral queue, the Resident History API,
 authority policy **ACA-2026/1**, and the Day-2 surprise amendment **ACA-2026/2**.
+
+### 🔄 How it works
+
+```mermaid
+flowchart LR
+    A[12 Referral Queue] --> B[Read Referral]
+    B --> C[Retrieve Resident History]
+    C --> D[Evaluate ACA-2026/1]
+    D --> E{Policy Decision}
+
+    E -->|Allowed| F[Draft Triage Note]
+    E -->|Authority Exceeded| G[Escalation]
+    E -->|ACA-2026/2 - under 18| H[Human Hand-off]
+
+    F --> I[Human Decision: Adopt / Decline]
+    G --> J[Audit Log]
+    H --> J
+    I --> J
+```
+
+Every box above is a real step in `orchestrator.py`'s pipeline, not an illustration —
+the same node names appear in the execution trace (`run_cli.py`, the API's audit log,
+and the screenshots below).
 
 ---
 
@@ -71,11 +106,23 @@ All five screenshots above were captured directly from the live deployment
 Chrome instance through the DevTools Protocol — the button was actually clicked and
 the actual live API response is what's shown. No screenshot was mocked or edited.
 
-A short demo GIF (`docs/demo.gif`) was in scope for this README but is not included —
-capturing screen video/GIF requires interactive screen-recording tooling this
-environment doesn't have, and per this project's own rule, nothing was faked to fill
-the gap. The live demo link above and the screenshots serve the same purpose in the
-meantime.
+### 🎥 See It In Action
+
+<!--
+docs/demo.gif does not exist yet, and no fake one has been added in its place.
+Capturing it requires interactive screen-recording/GIF-encoding tooling (e.g. a
+screen recorder plus ffmpeg or Pillow) that this environment doesn't have - the
+screenshots above were captured through real, scriptable browser automation
+(Chrome DevTools Protocol), which a GIF recording is not. Once a real ~20s
+recording exists at docs/demo.gif (open the app -> click "Process overnight
+referral queue" -> summary appears, 6/3/3 -> show the ACA-2026/2 hand-off and its
+"TRIAGE NOTE NOT GENERATED" text), uncomment the line below.
+![Caseworker Morning Demo](docs/demo.gif)
+-->
+
+Not yet included — see the comment in the README source for exactly what to record
+and where to place it. The live demo link and the five screenshots above cover the
+same ground in the meantime.
 
 ---
 
