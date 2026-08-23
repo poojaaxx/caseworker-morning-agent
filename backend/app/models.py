@@ -18,6 +18,7 @@ class RunStatus(str, Enum):
     AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class StepOutcome(str, Enum):

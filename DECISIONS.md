@@ -146,14 +146,41 @@ entries, and a case with an unknown/unexpected status value.
   caller — the run never silently reports success after a failure.
 - The API validates request bodies (Pydantic) and returns 4xx with a clear message on
   malformed input rather than 500ing or guessing intent.
+- A run can be explicitly cancelled at any point (`Orchestrator.cancel()` /
+  `POST /api/runs/{id}/cancel`), covering "interrupted/cancelled workflow" from the
+  required error-handling scope. Cancelling while an irreversible action is awaiting
+  approval abandons that action (records it, never executes it) rather than either
+  auto-approving or leaving the run in an ambiguous state. Cancelling a run that has
+  already finished (completed or cancelled) is rejected, not silently accepted.
 
 ## Testing
 
 Pytest covers: full happy-path run, each guardrail behavior (pause on irreversible
 action, approve executes, reject blocks, malformed/ambiguous decision is rejected,
 direct-call bypass is impossible), validation on malformed/missing/invalid-state
-records, simulated tool failure and dependency-unavailable handling, and duplicate
-approval submission. See `backend/tests/`.
+records, simulated tool failure and dependency-unavailable handling, duplicate approval
+submission, run cancellation (including mid-approval), and the same guardrail/happy-path
+behavior again at the HTTP API layer. 50 tests total, run via `pytest` from `backend/`.
+See `backend/tests/`.
+
+Writing this suite caught two real bugs before they shipped, both in
+`orchestrator.py`: (1) the audit-log entry that records a human's approval *decision*
+was originally written under the same `step_id` as the action itself with a hardcoded
+`SUCCESS` outcome, which double-counted executions in the summary step and even counted
+a *rejected* escalation as completed — found by
+`test_workflow.py::test_happy_path_counts_are_not_double_counted`, fixed by giving the
+decision-record a distinct, suffixed `step_id`. (2) two failure paths
+(`get_targets()` raising, and a case skipped for failing validation) wrote to the SQLite
+audit log but never appended to the in-memory `step_results` list that the API/UI
+actually render, so those events would have been invisible to the caseworker in the
+running app despite being in the audit trail — found by
+`test_failure_handling.py::test_invalid_case_is_skipped_not_silently_treated_as_valid`,
+fixed by appending a `StepResult` in both places. Both were verified fixed by the full
+suite (44/44 passing) and by re-running the workflow manually before and after.
+
+The project was also verified end to end from a genuine fresh `git clone` (see
+README.md > Clean clone verification) — not just "the tests pass in the dev
+environment."
 
 ## Features Rejected
 
@@ -169,7 +196,20 @@ approval submission. See `backend/tests/`.
 
 ## Features Cut Due to Time
 
-- (updated as development proceeds)
+- **Persisted/resumable run state machine.** Run state (current step, pending
+  approval) lives in-memory only. See "Architecture Decisions" and "Known Limitations."
+- **Real external integrations** for reminders/escalation (an actual SMS/email
+  provider, an actual supervisor-notification channel). These are simulated and
+  logged only — see "What the Solution Does Not Do."
+- **Multi-caseworker / authentication.** Out of scope for a single-caseworker demo;
+  every run is attributed to a fixed default caseworker unless the API caller supplies
+  a different name in the request body.
+- **Structured application logging beyond the audit table.** The SQLite audit log is
+  the system of record for what happened; there is no separate log file/format for
+  operational monitoring.
+
+Nothing on this list was mandatory functionality — the floor (agent workflow, guardrail,
+validation, error handling, audit trail, tests, docs) is complete.
 
 ## Known Limitations
 

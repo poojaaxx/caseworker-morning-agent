@@ -112,6 +112,9 @@ button.reject { background: var(--danger); }
 .outcome-rejected { background: #fee2e2; color: #991b1b; }
 .outcome-skipped { background: #f3f4f6; color: #4b5563; }
 .outcome-pending_approval { background: #fef3c7; color: #92400e; }
+.outcome-cancelled { background: #f3f4f6; color: #4b5563; }
+
+#cancel-btn { background: #6b7280; }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }

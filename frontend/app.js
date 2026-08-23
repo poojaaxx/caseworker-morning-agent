@@ -1,4 +1,5 @@
 const startBtn = document.getElementById("start-btn");
+const cancelBtn = document.getElementById("cancel-btn");
 const runStatusEl = document.getElementById("run-status");
 const stepListEl = document.getElementById("step-list");
 const approvalCard = document.getElementById("approval-card");
@@ -42,10 +43,28 @@ function renderState(state) {
     approvalCard.hidden = true;
   }
 
-  if (state.status === "completed") {
+  const finished = state.status === "completed" || state.status === "cancelled";
+  cancelBtn.hidden = finished;
+
+  if (finished) {
     startBtn.disabled = false;
     startBtn.textContent = "Start a new morning workflow";
     loadAudit();
+  }
+}
+
+async function cancelRun() {
+  if (!runId) return;
+  cancelBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+    const state = await res.json();
+    if (res.ok) {
+      window.__lastState = state;
+      renderState(state);
+    }
+  } finally {
+    cancelBtn.disabled = false;
   }
 }
 
@@ -119,6 +138,7 @@ startBtn.addEventListener("click", async () => {
     runId = state.run_id;
     window.__lastState = state;
     renderState(state);
+    cancelBtn.hidden = false;
     if (state.status !== "completed") {
       startBtn.textContent = "Running... (approve/reject below)";
     }
@@ -131,3 +151,4 @@ startBtn.addEventListener("click", async () => {
 
 approveBtn.addEventListener("click", () => decide("approve"));
 rejectBtn.addEventListener("click", () => decide("reject"));
+cancelBtn.addEventListener("click", cancelRun);

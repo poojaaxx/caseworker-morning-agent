@@ -77,6 +77,16 @@ def submit_approval(run_id: str, body: ApprovalRequest) -> dict:
     return orchestrator.get_state()
 
 
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> dict:
+    orchestrator = _get_run(run_id)
+    try:
+        orchestrator.cancel()
+    except ApprovalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return orchestrator.get_state()
+
+
 @app.get("/api/runs/{run_id}/audit")
 def get_run_audit(run_id: str) -> list[dict]:
     _get_run(run_id)  # 404 if unknown, for a consistent error even with no audit rows yet

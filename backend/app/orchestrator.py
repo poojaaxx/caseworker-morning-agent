@@ -40,8 +40,10 @@ _APPROVAL_META_SUFFIX = "__approval_decision"
 
 
 class ApprovalError(ValueError):
-    """Raised for any invalid approval submission: no matching pending action, an
-    already-decided action, or (via AmbiguousDecisionError) a malformed decision."""
+    """Raised for any invalid request against a run's current state: an approval
+    submission with no matching pending action, an already-decided action, a malformed
+    decision (via AmbiguousDecisionError), or an operation attempted on a run that has
+    already finished (completed or cancelled)."""
 
 
 class Orchestrator:
@@ -116,6 +118,30 @@ class Orchestrator:
             self._execute_target(self._active_tool, case)
 
         self._advance()
+
+    def cancel(self, cancelled_by: str = "caseworker") -> None:
+        """Stop the run safely, wherever it currently is. Never executes anything as
+        part of cancelling - if an irreversible action was awaiting approval, it is
+        simply abandoned (recorded, not executed), matching "cancelled/interrupted
+        workflow" from the required error-handling scope."""
+        if self.status in (RunStatus.COMPLETED, RunStatus.CANCELLED):
+            raise ApprovalError(f"cannot cancel a run that is already {self.status.value}")
+
+        if self.pending is not None:
+            summary = "run cancelled while this action was awaiting approval; not executed"
+            self._record(self.pending.step_id, self.pending.target_id, "run_cancelled",
+                          StepOutcome.SKIPPED, summary)
+            self.step_results.append(
+                StepResult(step_id=self.pending.step_id, outcome=StepOutcome.SKIPPED,
+                           summary=summary, detail={"case_id": self.pending.target_id})
+            )
+
+        self.pending = None
+        self._pending_case = None
+        self._target_queue = []
+        self.status = RunStatus.CANCELLED
+        self._record("__run__", None, "cancel_run", StepOutcome.SKIPPED,
+                      f"run cancelled by {cancelled_by}")
 
     def get_state(self) -> dict:
         return {

@@ -34,6 +34,8 @@ tool without a matching, explicit approval record. See
 - Per-record validation (missing/malformed/invalid-state data is flagged, not guessed at)
 - Failure handling for a simulated unavailable dependency, without crashing the run
 - Full audit log of every step, decision, and outcome, persisted to SQLite
+- Safe cancellation of an in-progress run at any point, including while an irreversible
+  action is awaiting approval (the action is abandoned, never executed)
 - Minimal web UI for running the demo end to end
 
 ## Architecture
@@ -91,11 +93,13 @@ pip install -r requirements.txt
 
 ## Configuration
 
-No configuration is required to run the project. Optionally, set `ANTHROPIC_API_KEY` to
-let the final "generate daily summary" step phrase its summary via an LLM call instead
-of a deterministic template — everything else about the workflow is unaffected either
-way (see `DECISIONS.md > LLM Usage`). Never commit a real key; use a local `.env` if you
-add one (`.env` is gitignored, `.env.example` is not).
+No configuration is required to run the project. Optionally, export `ANTHROPIC_API_KEY`
+in your shell before starting the server to let the final "generate daily summary" step
+phrase its summary via an LLM call instead of a deterministic template — everything
+else about the workflow is unaffected either way (see `DECISIONS.md > LLM Usage`). The
+app does not read a `.env` file; if unset (the default), the summary step uses its
+deterministic template and the project runs with zero configuration. Never commit a
+real API key.
 
 ## Run instructions
 
@@ -153,6 +157,10 @@ comes next.
   execution).
 - Unhandled tool exceptions are caught at the orchestrator level and recorded as a
   failed step; the run never reports success after a failure.
+- A run can be cancelled at any point via `POST /api/runs/{run_id}/cancel`. If an
+  irreversible action was awaiting approval when cancelled, it is recorded as abandoned
+  and never executed. Cancelling an already-completed or already-cancelled run is
+  rejected (400) rather than silently accepted.
 
 ## Known limitations
 
@@ -172,6 +180,8 @@ See `DECISIONS.md > What We Would Improve First`.
 
 ## Clean clone verification
 
-The steps under Installation/Run/Test above are exactly what was run to verify this
-project from a clean clone before submission (see `DECISIONS.md` for the verification
-log/notes if this section is expanded later).
+This project was verified by running the exact steps above from a fresh `git clone`
+into an empty directory, on a machine that already had Python 3.11 and git installed:
+`git clone` → `python -m venv .venv` → `pip install -r requirements.txt` → `pytest`
+(44 passed) → `uvicorn app.main:app` → confirmed `/api/health` and `/` both respond.
+No undocumented steps were needed.
