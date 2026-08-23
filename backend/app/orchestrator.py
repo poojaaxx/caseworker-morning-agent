@@ -77,10 +77,20 @@ class ReferralRunOrchestrator:
 
     def run(self) -> None:
         """Process the whole queue. Escalating or handing off a referral never stops
-        this loop (ACA-2026/1 4.3, ACA-2026/2 4.2) - only cancel() does."""
+        this loop (ACA-2026/1 4.3, ACA-2026/2 4.2) - and neither does an unexpected
+        bug while processing one referral: it is caught, recorded as FAILED for that
+        referral only, and the next referral is still attempted. Only cancel() stops
+        the loop early."""
         while self._queue and self.status == RunStatus.RUNNING:
             referral = self._queue.pop(0)
-            self._process_referral(referral)
+            try:
+                self._process_referral(referral)
+            except Exception as exc:
+                self._record(referral.referral_id, "referral_processing_failed", "failed", str(exc))
+                self.results.append(ReferralResult(
+                    referral=referral, outcome=ReferralOutcome.FAILED,
+                    trace=["unexpected_error"],
+                ))
         if self.status == RunStatus.RUNNING:
             self.status = RunStatus.COMPLETED
 

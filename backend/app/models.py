@@ -4,10 +4,12 @@ Kept as plain dataclasses (not pydantic) so the orchestrator/policy/history-clie
 have no framework dependency; the API layer (main.py) defines its own pydantic
 request/response schemas and converts to/from these.
 
-Superseded Phase-1 models (Case, per-action PendingApproval/StepOutcome pause state)
-have been removed - see DECISIONS.md > "Corrections to Initial Assumptions." What
-remains here (RunStatus, Decision, ApprovalRecord, AuditEntry, utc_now_iso,
-ValidationResult) is genuinely domain-agnostic and is reused unchanged.
+Superseded Phase-1 models (Case, per-action PendingApproval/StepOutcome pause state,
+plus a few that turned out unused once the new domain was wired up - ApprovalRecord,
+ValidationResult, AuditEntry; see DECISIONS.md > "Corrections to Initial Assumptions")
+have been removed. What remains here (RunStatus, Decision, utc_now_iso) is genuinely
+domain-agnostic and is reused unchanged; everything else is specific to the official
+referral-triage domain.
 """
 
 from __future__ import annotations
@@ -22,43 +24,11 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
-    FAILED = "failed"
 
 
 class Decision(str, Enum):
     APPROVE = "approve"
     REJECT = "reject"
-
-
-@dataclass
-class ApprovalRecord:
-    """A recorded human decision for one specific action instance. Reused unchanged
-    from Phase 1 (see guardrails.py) - this shape is domain-agnostic."""
-
-    run_id: str
-    step_id: str
-    target_id: Optional[str]
-    decision: Decision
-    decided_at: str
-    decided_by: str
-
-
-@dataclass
-class ValidationResult:
-    is_valid: bool
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class AuditEntry:
-    run_id: str
-    timestamp: str
-    step_id: str
-    target_id: Optional[str]
-    action: str
-    outcome: str
-    detail: str
 
 
 def utc_now_iso() -> str:
@@ -151,6 +121,7 @@ class ReferralOutcome(str, Enum):
     ESCALATED = "escalated"
     HANDOFF = "handoff"
     NOT_PROCESSED = "not_processed"  # run cancelled before this referral was reached
+    FAILED = "failed"  # an unexpected error while processing this one referral
 
 
 @dataclass

@@ -1,29 +1,27 @@
 """The explicit-decision primitive, reused unchanged from Phase 1.
 
 This module is deliberately small and has no knowledge of any specific domain. It
-answers exactly two questions:
+answers exactly one question: given a raw decision value from the API, is it an
+unambiguous "approve" or "reject"? Anything else raises - it is never silently treated
+as approval. Silence, timeout, "yes", wrong case, wrong type: all rejected.
 
-  1. Given a raw decision value from the API, is it an unambiguous "approve" or
-     "reject"? (parse_decision) Anything else raises - it is never silently treated as
-     approval. Silence, timeout, "yes", wrong case, wrong type: all rejected.
-  2. Given a set of already-recorded decisions for a run, is a specific action instance
-     authorized right now? (is_authorized)
-
-In Phase 1 this gated execution of an irreversible tool. In the official Problem 5
-domain (see orchestrator.py), the agent has no tool capable of taking a
-supervisor-approval-requiring action at all - see DECISIONS.md > "Structural safety" for
-why that is a stronger guarantee than an approval check could ever provide. This module
-is instead reused for the one place official policy (ACA-2026/1 2.4) does describe an
-explicit human decision: "A drafted [triage] note is a proposal. It has no effect on the
-case until a caseworker adopts it." adopt_note() in orchestrator.py is that decision
-point, and it is the only caller of parse_decision/is_authorized.
+In Phase 1 this also gated execution of an irreversible tool via a second function,
+is_authorized(), keyed by (run_id, step_id, target_id). That function has been removed
+here: the official Problem 5 domain has no tool capable of taking a
+supervisor-approval-requiring action at all (see DECISIONS.md > "Structural Safety" for
+why that is a stronger guarantee than an approval check could ever provide), and the
+one place official policy (ACA-2026/1 2.4) does describe an explicit human decision -
+"A drafted [triage] note is a proposal. It has no effect on the case until a caseworker
+adopts it" - is a one-shot decision against a single already-existing referral result
+(orchestrator.py's adopt_note()), not a repeatedly-consulted authorization table. Kept
+here anyway as a distinct file, rather than folded into orchestrator.py, because the
+"never treat an ambiguous decision as approval" rule is the one piece of this module
+that generalizes beyond this specific application and is independently tested.
 """
 
 from __future__ import annotations
 
-from typing import Optional
-
-from app.models import ApprovalRecord, Decision
+from app.models import Decision
 
 
 class AmbiguousDecisionError(ValueError):
@@ -44,17 +42,3 @@ def parse_decision(raw: object) -> Decision:
     raise AmbiguousDecisionError(
         f"decision must be exactly 'approve' or 'reject', got {raw!r}"
     )
-
-
-def is_authorized(
-    approvals: dict[tuple[str, str, Optional[str]], ApprovalRecord],
-    run_id: str,
-    step_id: str,
-    target_id: Optional[str],
-) -> bool:
-    """True only if an explicit APPROVE decision exists for this exact action instance.
-
-    No entry, a REJECT entry, or an entry for a different target/step all return False.
-    """
-    record = approvals.get((run_id, step_id, target_id))
-    return record is not None and record.decision == Decision.APPROVE

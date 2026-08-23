@@ -173,6 +173,36 @@ def test_cannot_cancel_twice(conn, history_client):
         orchestrator.cancel()
 
 
+def test_unexpected_error_on_one_referral_does_not_lose_the_others(conn, history_client, monkeypatch):
+    """'One referral failing should not lose the work already done on the others'
+    (official problem statement, 'if you have time'). Simulates a bug in policy
+    evaluation for one referral and confirms the run still completes with every other
+    referral processed and recorded, and the failure itself is visible, not silent."""
+    import app.orchestrator as orchestrator_module
+
+    referrals = load_referral_queue()
+    original = orchestrator_module.evaluate_requested_action
+    boom_id = referrals[3].referral_id
+
+    def flaky(referral):
+        if referral.referral_id == boom_id:
+            raise RuntimeError("simulated bug in policy evaluation")
+        return original(referral)
+
+    monkeypatch.setattr(orchestrator_module, "evaluate_requested_action", flaky)
+
+    orchestrator = ReferralRunOrchestrator(conn, "flaky-run", history_client=history_client,
+                                            referrals=referrals)
+    orchestrator.run()
+
+    assert orchestrator.status == RunStatus.COMPLETED
+    assert len(orchestrator.results) == len(referrals)  # nothing lost
+    failed = next(r for r in orchestrator.results if r.referral.referral_id == boom_id)
+    assert failed.outcome.value == "failed"
+    other_ids = {r.referral.referral_id for r in orchestrator.results} - {boom_id}
+    assert other_ids == {r.referral_id for r in referrals if r.referral_id != boom_id}
+
+
 def test_empty_referral_queue_completes_cleanly(conn, history_client):
     orchestrator = ReferralRunOrchestrator(conn, "empty-run", history_client=history_client, referrals=[])
     orchestrator.run()
