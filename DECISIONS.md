@@ -442,6 +442,69 @@ exactly as README.md documents.)
   API were re-verified straight afterward and matched the first run's referral-level
   results exactly, with the new `failed: 0` key present in the summary.
 
+## Deployment
+
+**Decision:** Two Render web services via a `render.yaml` blueprint — the FastAPI
+backend (which also serves `frontend/`, unchanged from local) and the resident
+history service, kept as genuinely separate services because that is what they
+already are locally (two independent HTTP processes talking over `HISTORY_SERVICE_URL`)
+— deployment didn't invent that boundary, it just hosts each side of it.
+
+**The official history service was not edited to make this work.** Its hardcoded
+`ThreadingHTTPServer(('127.0.0.1', port), ...)` binding is fine for local development
+but unreachable on a platform that requires binding `0.0.0.0` and a platform-assigned
+port. Editing `data-pack/services/history_service.py` would have broken the
+byte-identical/unmodified guarantee documented earlier in this file (verified with
+`diff` before every commit that touches `data-pack/`). Instead, `deploy/run_history_
+service.py` loads the official file's `Handler` and `DATA` by file path
+(`importlib.util.spec_from_file_location` — `data-pack` has a hyphen, so it can't be a
+normal Python import target anyway) and starts the server itself with
+deployment-appropriate host/port defaults. The official file is imported, never
+copied or edited; `diff data-pack/services/history_service.py` against the original
+is still empty. This is the same principle as `triage.py`'s guard living in application
+code rather than the data pack: infrastructure concerns belong in *our* code, not in
+the supplied files.
+
+**HISTORY_SERVICE_URL was already an environment variable** before this deployment
+work (see "Configuration" in README.md, added during Phase 2 for exactly this kind of
+flexibility) — no code change was needed to make it configurable. One small addition
+*was* needed: Render's blueprint `fromService`/`hostport` linking (the mechanism used
+so the backend reaches the history service over Render's private network rather than
+a public URL) hands over a bare `host:port` with no scheme, and `httpx` requires one.
+`HistoryServiceClient.__init__` now prepends `http://` if the value it's given doesn't
+already start with `http://`/`https://` — a three-line, backward-compatible addition
+(explicit URLs, including every existing call site and every test, are unaffected;
+`tests/test_history_client.py` covers both branches directly).
+
+**Why private networking over a public URL for the history service:** the data behind
+it is fictional (Calder County, invented residents), so publicly exposing it would be
+low-risk even without this — but Render's private networking was the same effort to
+wire up via the blueprint and is simply the more correct choice, so there was no
+reason to default to public exposure.
+
+**SQLite is ephemeral in this deployment**, same tradeoff as local (see "Architecture
+Decisions" above) — Render's filesystem for a web service instance is writable at
+runtime but not persisted across deploys/restarts. The audit log this app writes to
+SQLite is demo-scope traceability, not a system of record that needs to survive a
+redeploy; nothing about the referral-processing logic depends on it surviving one.
+
+**Known free-tier limitations, stated plainly:** Render's free web services spin down
+after a period of inactivity and take some seconds to cold-start on the next request
+(the first `POST /api/runs` after idle time will be slower than subsequent ones — this
+is a platform characteristic, not an application bug). Two free services also means
+the backend's calls to the history service inherit whatever the history service's own
+cold-start state is; a `GET /api/history-service/health` check before demoing is the
+practical way to confirm both are warm.
+
+**What was and was not actually verified:** the blueprint's syntax (`type`, `runtime`,
+`buildCommand`, `startCommand`, `envVars`/`fromService`/`property: hostport`,
+`healthCheckPath`) was checked against Render's current documentation before writing
+it, not assumed from memory — but a blueprint is only proven correct by an actual
+deployment, which requires the account owner's Render login. If deployment surfaces a
+syntax or wiring issue, that is not a claim of success falsified after the fact — see
+the deployment report delivered alongside this change for exactly what was and was not
+tested live.
+
 ## What We Would Improve First
 
 - Replace the keyword-table policy classifier with something that can flag its own

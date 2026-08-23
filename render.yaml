@@ -1,0 +1,34 @@
+services:
+  # Resident History API - the official, unmodified data-pack/services/history_service.py,
+  # started via deploy/run_history_service.py (see that file's docstring for why a
+  # wrapper is used instead of editing the official script). Not exposed publicly on
+  # purpose - the backend reaches it over Render's private network only.
+  - type: web
+    name: caseworker-history-service
+    runtime: python
+    plan: free
+    buildCommand: echo "history service is Python stdlib only - nothing to install"
+    startCommand: python deploy/run_history_service.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+
+  # FastAPI backend, also serving the static frontend/ (same as local: one process,
+  # see backend/app/main.py's StaticFiles mount).
+  - type: web
+    name: caseworker-morning-agent
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: HISTORY_SERVICE_URL
+        fromService:
+          type: web
+          name: caseworker-history-service
+          property: hostport

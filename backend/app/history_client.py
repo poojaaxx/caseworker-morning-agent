@@ -25,7 +25,14 @@ DEFAULT_BASE_URL = os.environ.get("HISTORY_SERVICE_URL", "http://127.0.0.1:8083"
 
 class HistoryServiceClient:
     def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = 5.0):
-        self.base_url = base_url.rstrip("/")
+        base_url = base_url.rstrip("/")
+        if not base_url.startswith(("http://", "https://")):
+            # Render's blueprint `fromService` linking (see render.yaml) hands services
+            # a bare "host:port" for private-network calls, with no scheme - tolerate
+            # that here rather than require every caller to prepend one. Explicit
+            # http(s):// URLs (local dev, tests) are passed through unchanged.
+            base_url = f"http://{base_url}"
+        self.base_url = base_url
         self._client = httpx.Client(timeout=timeout)
 
     def close(self) -> None:

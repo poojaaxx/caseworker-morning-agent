@@ -246,3 +246,36 @@ See `DECISIONS.md` → "What We Would Improve First."
 Verified by running exactly the steps above (`git clone` → venv → `pip install` →
 start the history service → `pytest` → `python run_cli.py`) from a fresh clone in an
 empty directory. See `DECISIONS.md` for the specific run log.
+
+**This repository remains the official, reproducible submission** — everything above
+works from a clean clone with no deployment platform involved. The live deployment
+below is additional, optional demo infrastructure, not a replacement for it.
+
+## Live demo (Render deployment)
+
+`render.yaml` at the repo root is a Render Blueprint defining two services:
+
+- **`caseworker-history-service`** — the official, unmodified
+  `data-pack/services/history_service.py`, started via `deploy/run_history_service.py`
+  (a thin wrapper that only changes host/port binding for a hosted environment — see
+  that file's docstring, and `DECISIONS.md` → "Deployment" for exactly why and how this
+  is still honestly "the unmodified official service"). Not exposed publicly; the
+  backend reaches it over Render's private network via `HISTORY_SERVICE_URL`
+  (auto-wired by the blueprint, `fromService`/`hostport`).
+- **`caseworker-morning-agent`** — the same FastAPI app + frontend described above,
+  unchanged, with `HISTORY_SERVICE_URL` set automatically instead of defaulting to
+  `localhost`.
+
+To deploy: connect this GitHub repository in the Render dashboard as a Blueprint
+(New → Blueprint), point it at `render.yaml`, and deploy both services — no manual
+per-service configuration should be needed beyond that.
+
+**Live URLs:** not yet deployed as of this commit — Render assigns the actual URL when
+the service is created (predictably `https://caseworker-morning-agent.onrender.com` if
+that name is available, but unconfirmed until deployed). Once live:
+- Backend/API: the assigned `https://<service-name>.onrender.com` URL
+- Frontend: same URL (served by the backend)
+- Swagger: that URL + `/docs`
+
+See `DECISIONS.md` → "Deployment" for known free-tier limitations (cold starts,
+ephemeral SQLite).

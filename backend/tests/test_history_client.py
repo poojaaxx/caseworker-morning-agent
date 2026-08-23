@@ -39,3 +39,20 @@ def test_household_members_include_date_of_birth_and_relationship(history_client
     member = next(m for m in result.record.household if m.name == "William Iverson")
     assert member.date_of_birth == "2021-02-26"
     assert member.relationship == "Son/daughter"
+
+
+def test_base_url_without_scheme_gets_http_prefix(_history_service):
+    """Render's blueprint `fromService` linking (render.yaml) hands services a bare
+    "host:port" for private-network calls - the client must tolerate that, not just
+    explicit http(s):// URLs."""
+    bare = _history_service.replace("http://", "")
+    client = HistoryServiceClient(base_url=bare)
+    assert client.base_url == f"http://{bare}"
+    assert client.health() is True
+    client.close()
+
+
+def test_explicit_scheme_is_passed_through_unchanged(_history_service):
+    client = HistoryServiceClient(base_url=_history_service)
+    assert client.base_url == _history_service
+    client.close()
