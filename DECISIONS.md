@@ -403,6 +403,19 @@ adoption; and the same behaviors again at the HTTP API layer.
 - Does not persist run state across a backend restart.
 - Does not handle referrals or policy categories outside the official data pack.
 
+## Clean Clone Verification (Phase 2)
+
+Performed after all of the above, from a fresh `git clone` into an empty temp
+directory, on a machine that already had Python 3.11 and git: `git clone` → `python -m
+venv .venv` → `pip install -r requirements.txt` → started
+`data-pack/services/history_service.py` in a separate terminal → `pytest` (**73
+passed**, ~137s) → `python run_cli.py` (all 12 referrals processed: 6 autonomous, 3
+escalated, 3 hand-off, matching the table above exactly) → `uvicorn app.main:app` →
+`POST /api/runs` via curl returned the same summary. No undocumented steps were
+needed. (`pytest` does not require the manually-started service — it starts its own
+disposable instance of the same unmodified script on a different port; the manual
+instance was only needed for `run_cli.py`/`uvicorn`, exactly as README.md documents.)
+
 ## What We Would Improve First
 
 - Replace the keyword-table policy classifier with something that can flag its own
