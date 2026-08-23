@@ -468,19 +468,36 @@ the supplied files.
 **HISTORY_SERVICE_URL was already an environment variable** before this deployment
 work (see "Configuration" in README.md, added during Phase 2 for exactly this kind of
 flexibility) — no code change was needed to make it configurable. One small addition
-*was* needed: Render's blueprint `fromService`/`hostport` linking (the mechanism used
-so the backend reaches the history service over Render's private network rather than
-a public URL) hands over a bare `host:port` with no scheme, and `httpx` requires one.
-`HistoryServiceClient.__init__` now prepends `http://` if the value it's given doesn't
-already start with `http://`/`https://` — a three-line, backward-compatible addition
-(explicit URLs, including every existing call site and every test, are unaffected;
-`tests/test_history_client.py` covers both branches directly).
+*was* needed regardless of networking approach: a bare `host:port` (no scheme) wasn't
+previously accepted, and `httpx` requires one. `HistoryServiceClient.__init__` now
+prepends `http://` if the value it's given doesn't already start with
+`http://`/`https://` — a three-line, backward-compatible addition (explicit URLs,
+including every existing call site and every test, are unaffected;
+`tests/test_history_client.py` covers both branches directly). This code is harmless
+either way and was left in place even after the networking decision below changed.
 
-**Why private networking over a public URL for the history service:** the data behind
-it is fictional (Calder County, invented residents), so publicly exposing it would be
-low-risk even without this — but Render's private networking was the same effort to
-wire up via the blueprint and is simply the more correct choice, so there was no
-reason to default to public exposure.
+**Private networking was tried first, and it did not work — corrected after live
+verification, not assumed.** The original blueprint used `fromService`/`hostport` so
+the backend would reach the history service over Render's private network rather than
+a public URL. That deployed and looked syntactically fine, but the actual production
+runs told a different story: every one of the 12 referrals in two separate live runs
+failed history retrieval with `[Errno -2] Name or service not known` — the private
+hostname Render injected into `HISTORY_SERVICE_URL` did not resolve from inside the
+backend's container, on Render's free "web" plan. (Render has no private-only service
+type on this plan — `caseworker-history-service` already had a public `onrender.com`
+URL of its own the whole time; only the backend→backend private link was broken.) The
+orchestrator's own conservative fallback (ACA-2026/2 §5.2: can't establish household
+composition → treat as though §3.9 applies) handled the outage safely — no crash, no
+autonomous action taken on incomplete information — but it silently produced 0
+autonomous / 3 escalated / 9 hand-off instead of the correct 6 / 3 / 3, because nine of
+the twelve referrals could not prove their household had no minor. **Fix:**
+`HISTORY_SERVICE_URL` in `render.yaml` now points at the history service's public URL
+(`https://caseworker-history-service.onrender.com`) instead of `fromService`/
+`hostport`. `history_client.py` already accepted a full `https://` URL unchanged, so
+this was a one-line blueprint change, not a code change. The data behind the history
+service is fictional (Calder County, invented residents), so public exposure carries
+no real privacy risk — see the security check in the deployment report for exact
+verification that no credentials/secrets/API keys exist anywhere in `data-pack/`.
 
 **SQLite is ephemeral in this deployment**, same tradeoff as local (see "Architecture
 Decisions" above) — Render's filesystem for a web service instance is writable at
@@ -496,14 +513,14 @@ the backend's calls to the history service inherit whatever the history service'
 cold-start state is; a `GET /api/history-service/health` check before demoing is the
 practical way to confirm both are warm.
 
-**What was and was not actually verified:** the blueprint's syntax (`type`, `runtime`,
-`buildCommand`, `startCommand`, `envVars`/`fromService`/`property: hostport`,
-`healthCheckPath`) was checked against Render's current documentation before writing
-it, not assumed from memory — but a blueprint is only proven correct by an actual
-deployment, which requires the account owner's Render login. If deployment surfaces a
-syntax or wiring issue, that is not a claim of success falsified after the fact — see
-the deployment report delivered alongside this change for exactly what was and was not
-tested live.
+**What was and was not actually verified:** both services were actually deployed to
+Render and tested live — this is no longer a claim resting on blueprint syntax review
+alone. The private-networking version was deployed and its failure (above) was
+observed directly from two real production runs' audit logs, not inferred. The
+public-URL fix was likewise deployed and re-verified live: `history_ok: true` for every
+referral, `GET /api/history-service/health` → `{"reachable": true}`, and a live
+`POST /api/runs` producing 6 autonomous / 3 escalated / 3 hand-off — see the deployment
+report for the exact commands and responses.
 
 ## What We Would Improve First
 

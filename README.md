@@ -259,23 +259,31 @@ below is additional, optional demo infrastructure, not a replacement for it.
   `data-pack/services/history_service.py`, started via `deploy/run_history_service.py`
   (a thin wrapper that only changes host/port binding for a hosted environment — see
   that file's docstring, and `DECISIONS.md` → "Deployment" for exactly why and how this
-  is still honestly "the unmodified official service"). Not exposed publicly; the
-  backend reaches it over Render's private network via `HISTORY_SERVICE_URL`
-  (auto-wired by the blueprint, `fromService`/`hostport`).
+  is still honestly "the unmodified official service"). Reachable at its own public
+  URL below — private networking (`fromService`/`hostport`) was tried first and did
+  not resolve on Render's free plan; see `DECISIONS.md` → "Deployment" for the full,
+  honest account of that, verified against two real production runs.
 - **`caseworker-morning-agent`** — the same FastAPI app + frontend described above,
-  unchanged, with `HISTORY_SERVICE_URL` set automatically instead of defaulting to
-  `localhost`.
+  unchanged, with `HISTORY_SERVICE_URL` pointed at the history service's public URL
+  instead of defaulting to `localhost`.
 
 To deploy: connect this GitHub repository in the Render dashboard as a Blueprint
 (New → Blueprint), point it at `render.yaml`, and deploy both services — no manual
-per-service configuration should be needed beyond that.
+per-service configuration is needed beyond that.
 
-**Live URLs:** not yet deployed as of this commit — Render assigns the actual URL when
-the service is created (predictably `https://caseworker-morning-agent.onrender.com` if
-that name is available, but unconfirmed until deployed). Once live:
-- Backend/API: the assigned `https://<service-name>.onrender.com` URL
-- Frontend: same URL (served by the backend)
-- Swagger: that URL + `/docs`
+**Live URLs (deployed and verified):**
+- Backend/API + frontend: https://caseworker-morning-agent.onrender.com
+- Swagger: https://caseworker-morning-agent.onrender.com/docs
+- History service: https://caseworker-history-service.onrender.com
+
+Verified live with a real `POST /api/runs` against the actual deployed services (not
+assumed): **12 total — 6 autonomous, 3 escalated, 3 hand-off, 0 failed, 0
+not_processed** — matching the local baseline exactly, with `history_ok: true` for
+every referral and the same three referrals genuinely handed off under ACA-2026/2 §3.9
+(household contains someone under 18) as locally. See `DECISIONS.md` → "Deployment"
+for the full incident: private networking was tried first, failed in production with a
+DNS resolution error, and was corrected to the public URL above — documented rather
+than silently fixed.
 
 See `DECISIONS.md` → "Deployment" for known free-tier limitations (cold starts,
 ephemeral SQLite).
