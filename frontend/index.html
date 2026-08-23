@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>The Caseworker's Morning</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>The Caseworker's Morning</h1>
+    <p class="subtitle">An agent that runs the daily routine end to end, and stops to ask before doing anything that can't be undone.</p>
+  </header>
+
+  <main>
+    <section id="controls">
+      <button id="start-btn">Start morning workflow</button>
+      <span id="run-status" class="status-pill" hidden></span>
+    </section>
+
+    <section id="approval-card" class="approval-card" hidden>
+      <h2>Human approval required</h2>
+      <p class="approval-desc" id="approval-desc"></p>
+      <p class="approval-reason" id="approval-reason"></p>
+      <pre class="approval-payload" id="approval-payload"></pre>
+      <div class="approval-buttons">
+        <button id="approve-btn" class="approve">Approve</button>
+        <button id="reject-btn" class="reject">Reject</button>
+      </div>
+      <p class="approval-error" id="approval-error" hidden></p>
+    </section>
+
+    <section id="steps">
+      <h2>Workflow steps</h2>
+      <ol id="step-list"></ol>
+    </section>
+
+    <section id="audit-section" hidden>
+      <h2>Audit log</h2>
+      <table id="audit-table">
+        <thead>
+          <tr><th>Time</th><th>Step</th><th>Target</th><th>Action</th><th>Outcome</th></tr>
+        </thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
