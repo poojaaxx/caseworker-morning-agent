@@ -21,15 +21,17 @@ body {
 
 header {
   padding: 2rem 1.5rem 1rem;
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
 h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
-.subtitle { color: var(--muted); margin: 0; }
+.subtitle { color: var(--muted); margin: 0 0 0.5rem; }
+.note { color: var(--muted); font-size: 0.8rem; margin: 0; }
+.note code { background: #eee; padding: 0.1rem 0.3rem; border-radius: 4px; }
 
 main {
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
 }
@@ -53,8 +55,8 @@ button {
   background: var(--accent);
   color: white;
 }
-
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+#cancel-btn { background: #6b7280; }
 
 .status-pill {
   padding: 0.25rem 0.6rem;
@@ -65,57 +67,54 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border: 1px solid #c7d2fe;
 }
 
-.approval-card {
-  border-color: var(--warning);
-  background: #fffbeb;
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
 }
-
-.approval-card h2 { margin-top: 0; color: #92400e; }
-.approval-desc { font-weight: 600; }
-.approval-reason { color: var(--muted); }
-.approval-payload {
-  background: #fff;
+.summary-cell {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.85rem;
-  overflow-x: auto;
+  border-radius: 8px;
+  padding: 0.75rem;
+  text-align: center;
 }
+.summary-count { font-size: 1.6rem; font-weight: 700; }
+.summary-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
 
-.approval-buttons { display: flex; gap: 0.75rem; margin-top: 0.75rem; }
-button.approve { background: var(--success); }
-button.reject { background: var(--danger); }
-.approval-error { color: var(--danger); font-weight: 600; }
+.results-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
 
-#step-list { list-style: none; margin: 0; padding: 0; }
-
-#step-list li {
-  padding: 0.6rem 0;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 0.6rem;
-  align-items: baseline;
+.result {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
 }
-#step-list li:last-child { border-bottom: none; }
+.result.outcome-autonomous_triaged { border-left-color: var(--success); }
+.result.outcome-escalated { border-left-color: var(--danger); }
+.result.outcome-handoff { border-left-color: var(--warning); }
+.result.outcome-not_processed { border-left-color: var(--muted); }
 
-.outcome-badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 0.1rem 0.45rem;
-  border-radius: 4px;
-  flex-shrink: 0;
+.result-header { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.badge {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  padding: 0.15rem 0.5rem; border-radius: 4px; background: #f3f4f6; color: #4b5563;
 }
-.outcome-success { background: #dcfce7; color: #166534; }
-.outcome-partial { background: #fef3c7; color: #92400e; }
-.outcome-failed { background: #fee2e2; color: #991b1b; }
-.outcome-rejected { background: #fee2e2; color: #991b1b; }
-.outcome-skipped { background: #f3f4f6; color: #4b5563; }
-.outcome-pending_approval { background: #fef3c7; color: #92400e; }
-.outcome-cancelled { background: #f3f4f6; color: #4b5563; }
+.outcome-autonomous_triaged .badge { background: #dcfce7; color: #166534; }
+.outcome-escalated .badge { background: #fee2e2; color: #991b1b; }
+.outcome-handoff .badge { background: #fef3c7; color: #92400e; }
+.resident, .requested-action { color: var(--muted); font-size: 0.85rem; }
 
-#cancel-btn { background: #6b7280; }
+.trace { font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; font-family: monospace; }
 
-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+.detail { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); font-size: 0.9rem; }
+.detail p { margin: 0.25rem 0; }
+.no-note { font-weight: 700; color: var(--danger); }
+.adoption-status { font-style: italic; color: var(--muted); }
+
+button.adopt { background: var(--success); margin-right: 0.5rem; }
+button.decline { background: var(--danger); }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
+.detail-cell { max-width: 400px; word-break: break-word; }
