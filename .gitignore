@@ -24,6 +24,12 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+__MACOSX/
+
+# Raw hackathon material as supplied (messy names, zip-extraction cruft).
+# The actual files we use are copied, unmodified, into data-pack/ (tracked).
+/5 1/
+/5 - Surprise Challenge/
 
 # IDE
 .vscode/
