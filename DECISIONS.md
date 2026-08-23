@@ -420,16 +420,27 @@ exactly that.
 
 ## Clean Clone Verification (Phase 2)
 
-Performed after all of the above, from a fresh `git clone` into an empty temp
-directory, on a machine that already had Python 3.11 and git: `git clone` → `python -m
-venv .venv` → `pip install -r requirements.txt` → started
-`data-pack/services/history_service.py` in a separate terminal → `pytest` (**73
-passed**, ~137s) → `python run_cli.py` (all 12 referrals processed: 6 autonomous, 3
-escalated, 3 hand-off, matching the table above exactly) → `uvicorn app.main:app` →
-`POST /api/runs` via curl returned the same summary. No undocumented steps were
-needed. (`pytest` does not require the manually-started service — it starts its own
-disposable instance of the same unmodified script on a different port; the manual
-instance was only needed for `run_cli.py`/`uvicorn`, exactly as README.md documents.)
+Performed twice from a fresh `git clone` into an empty temp directory, on a machine
+that already had Python 3.11 and git: `git clone` → `python -m venv .venv` → `pip
+install -r requirements.txt` → started `data-pack/services/history_service.py` in a
+separate terminal → `pytest` → `python run_cli.py` (all 12 referrals processed: 6
+autonomous, 3 escalated, 3 hand-off, matching the table above exactly) → `uvicorn
+app.main:app` → `POST /api/runs` via curl returned the same summary. No undocumented
+steps were needed either time. (`pytest` does not require the manually-started
+service — it starts its own disposable instance of the same unmodified script on a
+different port; the manual instance was only needed for `run_cli.py`/`uvicorn`,
+exactly as README.md documents.)
+
+- First run (commit `0314ad8`, before the dead-code cleanup below): **73 passed**,
+  ~137s.
+- Second, final run (commit `2576f16`, after cleanup and the new failure-isolation
+  test): **74 passed**. Wall time was ~564s on this run specifically because of
+  contention from the many other processes accumulated over this long development
+  session (confirmed via CPU-time sampling during the run: the test process's own CPU
+  time stayed proportionate to earlier runs; it was simply scheduled less of the
+  machine's actual CPU) - not a regression in the suite itself. `run_cli.py` and the
+  API were re-verified straight afterward and matched the first run's referral-level
+  results exactly, with the new `failed: 0` key present in the summary.
 
 ## What We Would Improve First
 
