@@ -297,7 +297,7 @@ real history service, which has built-in simulated per-request latency by design
 
 ### Prerequisites
 
-- Python 3.10 or later
+- Python 3.11 or later
 - pip
 
 ### macOS / Linux
