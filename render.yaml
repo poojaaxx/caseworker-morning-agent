@@ -1,8 +1,11 @@
 services:
   # Resident History API - the official, unmodified data-pack/services/history_service.py,
   # started via deploy/run_history_service.py (see that file's docstring for why a
-  # wrapper is used instead of editing the official script). Not exposed publicly on
-  # purpose - the backend reaches it over Render's private network only.
+  # wrapper is used instead of editing the official script). Reachable at its public
+  # onrender.com URL (see HISTORY_SERVICE_URL below) - Render's free "web" plan has no
+  # private-only service type, and free-tier private networking between two web
+  # services was tried and did not resolve in production; see DECISIONS.md >
+  # "Deployment" for the full history.
   - type: web
     name: caseworker-history-service
     runtime: python
@@ -28,7 +31,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: HISTORY_SERVICE_URL
-        fromService:
-          type: web
-          name: caseworker-history-service
-          property: hostport
+        # fromService/hostport (private networking) produced a hostname the backend
+        # could not resolve in production - confirmed live: every referral failed with
+        # "[Errno -2] Name or service not known". Using the History Service's public
+        # URL instead; history_client.py already accepts a full https:// URL
+        # unchanged, so no code change was needed for this fix.
+        value: https://caseworker-history-service.onrender.com
