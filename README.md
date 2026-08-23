@@ -1,30 +1,101 @@
+<div align="center">
+
 # 🧑‍💼 The Caseworker's Morning
 
-> An agentic workflow that automates repetitive caseworker morning processing while
-> enforcing human approval and authority-aware guardrails.
+### An agent that processes overnight referrals end-to-end — and knows exactly when to stop and ask a human.
 
 [![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)](https://fastapi.tiangolo.com/)
 [![pytest](https://img.shields.io/badge/tests-83%20passing-brightgreen)](https://github.com/poojaaxx/caseworker-morning-agent)
 [![Render](https://img.shields.io/badge/deployed%20on-Render-46E3B7)](https://caseworker-morning-agent.onrender.com/)
 
-<p align="center">
-  <a href="https://caseworker-morning-agent.onrender.com/">
-    <img src="https://img.shields.io/badge/🚀_LIVE_DEMO-Try_it_now-blue?style=for-the-badge" alt="Live Demo" />
-  </a>
-  <a href="https://caseworker-morning-agent.onrender.com/docs">
-    <img src="https://img.shields.io/badge/📚_API_DOCS-Swagger-009688?style=for-the-badge" alt="API Docs" />
-  </a>
-  <a href="https://github.com/poojaaxx/caseworker-morning-agent">
-    <img src="https://img.shields.io/badge/💻_GITHUB-Source-181717?style=for-the-badge" alt="GitHub" />
-  </a>
-</p>
+**Built for Brite Spark 2026, Problem 5 (Agentic AI / Guardrails) — an agent that reads a referral, pulls the resident's history, and drafts a triage note, but structurally cannot perform or draft anything outside its written authority.**
 
-Built for **Brite Spark 2026, Problem 5 (Agentic AI / Guardrails)**, against the
-official supplied data pack — the fixed 12-referral queue, the Resident History API,
+[🚀 Live Demo](https://caseworker-morning-agent.onrender.com/) · [📖 Documentation](DECISIONS.md) · [💻 Repository](https://github.com/poojaaxx/caseworker-morning-agent)
+
+</div>
+
+---
+
+## 📊 See It In Action
+
+<div align="center">
+<img src="docs/images/workflow-results.png" width="900" alt="A real live run: 6 autonomous, 3 escalated, 3 hand-off">
+</div>
+
+> A real run against the [live deployment](https://caseworker-morning-agent.onrender.com/) — all 12 official referrals, captured straight from the actual app (see [Screenshots](#-screenshots) for how).
+
+**`docs/demo/overview.gif` has not been recorded yet.** No fake GIF has been added in
+its place — see [GIF status](#-gif-status) for exactly what's missing and why, and the
+real screenshot above for genuine, current visual proof in the meantime.
+
+---
+
+## ❓ Problem
+
+> A caseworker starts every day the same way: check the referrals that came in
+> overnight, pull each resident's history, and draft a triage note on what should
+> happen next. None of it is difficult, all of it is necessary, and it happens before
+> the caseworker has done anything that needs their actual judgement.
+>
+> At least one referral in the queue asks for something outside the agent's authority.
+> Recognising it, refusing it, escalating it, and carrying on with the rest is part of
+> the floor, not a bonus.
+
+This is the official Brite Spark 2026 Problem 5 brief, built against the organizers'
+own data pack (`data-pack/`) — the fixed 12-referral queue, the Resident History API,
 authority policy **ACA-2026/1**, and the Day-2 surprise amendment **ACA-2026/2**.
 
-### 🔄 How it works
+## ✅ Solution
+
+An agent processes the official 12-referral overnight queue end to end. For each
+referral it:
+
+1. **Reads** the referral (§2.1).
+2. **Retrieves** the resident's history, household, and case events from the official
+   Resident History API (§2.2).
+3. **Evaluates the requested action** against ACA-2026/1 §3 — does it need supervisor
+   approval (a change to entitlement/award, suspension/termination/reinstatement, a
+   payment-details change, a communication, a disclosure, a fraud finding, or anything
+   ambiguous — §6.1 treats "unclear" as "yes")?
+   - **Yes** → nothing is performed, nothing is drafted, an **escalation** is created
+     with full context (§4). The rest of the queue keeps processing.
+   - **No** → continue.
+4. **Evaluates the household** for ACA-2026/2 §3.9 — does it include a person under 18?
+   - **Yes**, or composition can't be established → **no triage note is drafted at
+     all**, not even a draft. A **hand-off** is created instead, preserving everything
+     already retrieved.
+   - **No** → draft a triage note (§2.4) — a proposal with no effect until a
+     caseworker adopts it.
+
+Every step is written to a full execution trace (§5.1) — visible via `run_cli.py`,
+the API's audit log, or the frontend.
+
+## 💡 Why This Approach
+
+| Design choice | Why |
+|---|---|
+| Escalation and hand-off are **separate outcomes**, not one "blocked" bucket | ACA-2026/2 §3.3 explicitly requires the distinction — different triggers, different meanings, different audit actions |
+| Restricted actions have **no implementation at all**, not a permission check | A capability that doesn't exist can't be bypassed by a bug or a prompt; see [Structural Safety](#-structural-safety) |
+| Policy lives in **data** (`policy_rules.json`), not `if` branches | The official brief's own guidance: a policy change shouldn't require a code change |
+| History is fetched **once per referral** and reused everywhere | Nothing already retrieved is thrown away when a hand-off is created |
+| One referral escalating/handing off **never stops the queue** | All 12 referrals are always reached and recorded, every time |
+
+## 🌟 Key Features
+
+- End-to-end agent run over the official 12-referral queue
+- Policy-driven evaluation (ACA-2026/1 §2–§4, §6.1), rules kept as data, not hardcoded branches
+- Structural drafting guard for ACA-2026/2 §3.9
+- Tested, first-class distinction between **escalation** and **hand-off**
+- Full execution trace — plain stdout (`run_cli.py`) and via the API/audit log
+- Millisecond-precision audit timestamps (SQLite `seq` is the authoritative order)
+- Safe run cancellation, with everything already processed preserved
+- Optional caseworker note-adoption step (approve/reject) that never treats silence,
+  timeout, or an ambiguous response as approval
+
+---
+
+## 🔄 Core Workflow
 
 ```mermaid
 flowchart LR
@@ -45,188 +116,63 @@ flowchart LR
 
 Every box above is a real step in `orchestrator.py`'s pipeline, not an illustration —
 the same node names appear in the execution trace (`run_cli.py`, the API's audit log,
-and the screenshots below).
+and the screenshots in this README).
+
+**`docs/demo/core-workflow.gif` has not been recorded yet** — see [GIF status](#-gif-status).
 
 ---
 
-## 🚀 Live Demo
+## 🔀 Handling the Day-2 Change
 
-**App (UI + API):** https://caseworker-morning-agent.onrender.com/
-**API docs (Swagger):** https://caseworker-morning-agent.onrender.com/docs
-**Resident History Service:** https://caseworker-history-service.onrender.com
+Partway through, the organizers issued **ACA-2026/2**: an amendment inserting §3.9 —
+drafting a triage note is itself prohibited (not just its adoption) for a household
+that includes a person under 18, with a hand-off that must be visibly distinct from
+an escalation and must preserve any work already done.
 
-> The live deployment uses the official supplied referral and resident history data
-> pack — the same fixed 12-referral queue and resident records as local development,
-> not a mock or a subset.
+<div align="center">
+<img src="docs/images/day2-handoff.png" width="700" alt="ACA-2026/2 hand-off - TRIAGE NOTE NOT GENERATED">
+</div>
 
-This is a free-tier demo deployment (Render's free plan), **not a production
-deployment** — cold starts after idle periods are expected, and the audit log
-(SQLite) is not persisted across redeploys. See [Known limitations](#known-limitations)
-and `DECISIONS.md` → "Deployment" for the full, honest account, including a real
-production incident (private networking failed, was diagnosed live, and fixed) that's
-documented rather than glossed over.
+> RF-2026-0412 — the household includes a minor (William Iverson). No triage note is
+> generated at all; the run states `TRIAGE NOTE NOT GENERATED` explicitly.
 
-### 🖥️ Live Application
+**Every requirement mapped onto an existing extension point — no module was rewritten:**
 
-![Caseworker Morning Dashboard](docs/images/dashboard.png)
+| Requirement | Landed in |
+|---|---|
+| New restricted-drafting rule | `evaluate_household_for_aca_2026_2` in `policy.py` — the module already built to hold policy evaluation |
+| Agent must *refuse to draft* | `triage.py`'s guard — the one function that produces triage-note text |
+| A new, distinguishable outcome | `ReferralOutcome.HANDOFF` / `HandoffRecord` — siblings of the escalation types already in `models.py` |
+| A new pipeline branch | One `if` in `orchestrator.py`'s existing per-referral pipeline — reusing the same history fetch, audit log, and trace pattern already used for escalation |
+| Preserve work already in progress | History is fetched once and reused for the hand-off record — see `test_handoff_does_not_refetch_history` |
 
-*The live app's landing screen — a single action, no other setup required.*
+This is the concrete evidence that the architecture was built to absorb a policy
+change, not hard-coded for the original requirement — full account in
+[`DECISIONS.md` → "ACA-2026/2 Surprise Challenge (Day-2)"](DECISIONS.md).
 
-### 📊 Live Workflow Results
-
-![Workflow Results](docs/images/workflow-results.png)
-
-*A real run against the live deployment: 6 autonomous, 3 escalated, 3 hand-off, 0
-failed, 0 not_processed — all 12 official referrals.*
-
-### 🟢 Autonomous Triage
-
-![Autonomous Triage](docs/images/autonomous-triage.png)
-
-*RF-2026-0413 — no restricted action, no minor in the household: a triage note is
-drafted and waits for a caseworker to adopt or decline it.*
-
-### 🔴 Escalation
-
-![Escalation](docs/images/escalation.png)
-
-*RF-2026-0415 — requests suspending an award (ACA-2026/1 §3.2). The agent does not
-perform the action or draft anything; it escalates with the exact policy basis.*
-
-### 🟠 Day-2 Surprise — Human Hand-off
-
-![ACA-2026/2 Human Hand-off](docs/images/day2-handoff.png)
-
-*RF-2026-0412 — the household includes a minor (ACA-2026/2 §3.9). No triage note is
-generated at all, not even a draft — the run states `TRIAGE NOTE NOT GENERATED`
-explicitly and hands off to a human.*
-
-All five screenshots above were captured directly from the live deployment
-(`https://caseworker-morning-agent.onrender.com/`) by driving a real, unmodified
-Chrome instance through the DevTools Protocol — the button was actually clicked and
-the actual live API response is what's shown. No screenshot was mocked or edited.
-
-### 🎥 See It In Action
-
-<!--
-docs/demo.gif does not exist yet, and no fake one has been added in its place.
-Capturing it requires interactive screen-recording/GIF-encoding tooling (e.g. a
-screen recorder plus ffmpeg or Pillow) that this environment doesn't have - the
-screenshots above were captured through real, scriptable browser automation
-(Chrome DevTools Protocol), which a GIF recording is not. Once a real ~20s
-recording exists at docs/demo.gif (open the app -> click "Process overnight
-referral queue" -> summary appears, 6/3/3 -> show the ACA-2026/2 hand-off and its
-"TRIAGE NOTE NOT GENERATED" text), uncomment the line below.
-![Caseworker Morning Demo](docs/demo.gif)
--->
-
-Not yet included — see the comment in the README source for exactly what to record
-and where to place it. The live demo link and the five screenshots above cover the
-same ground in the meantime.
+**`docs/demo/day2-change.gif` has not been recorded yet** — see [GIF status](#-gif-status).
 
 ---
 
-## What it is
+## 🏗️ Architecture
 
-> A caseworker starts every day the same way: check the referrals that came in
-> overnight, pull each resident's history, and draft a triage note on what should
-> happen next. None of it is difficult, all of it is necessary, and it happens before
-> the caseworker has done anything that needs their actual judgement.
-
-An agent processes the official 12-referral overnight queue end to end. For each
-referral it:
-
-1. Reads the referral (ACA-2026/1 §2.1).
-2. Retrieves the resident's history, household, and case events from the official
-   Resident History API (§2.2).
-3. Evaluates the requested action against ACA-2026/1 §3 (does it need supervisor
-   approval — a change to entitlement/award, suspension/termination/reinstatement, a
-   payment-details change, a communication, a disclosure, a fraud finding, or anything
-   ambiguous — §6.1 treats "unclear" as "yes"):
-   - **Yes** → no action is taken, nothing is drafted, an **escalation** is created
-     with full context (§4). The rest of the queue keeps processing.
-   - **No** → continue to step 4.
-4. Evaluates the household for ACA-2026/2 §3.9 (does it include a person under 18):
-   - **Yes**, or household composition cannot be established → **no triage note is
-     drafted at all**, not even a partial or "for review" one. A **hand-off** is
-     created instead, preserving everything already retrieved. The rest of the queue
-     keeps processing.
-   - **No** → draft a triage note (§2.4) — a proposal with no effect until a
-     caseworker adopts it.
-
-Every step, decision, and outcome is written to a full execution trace (§5.1),
-visible via `run_cli.py`, the API's audit log, or the frontend.
-
-## Why it matters
-
-The official problem statement deliberately includes a referral that asks for
-something outside the agent's authority — recognising it, refusing it, escalating it,
-and continuing with the rest of the queue is part of the floor, not a bonus. This
-project treats that as the central design constraint, not an edge case bolted on
-afterward: the escalation path and the ACA-2026/2 hand-off path are first-class
-outcomes, tested and traced exactly like the autonomous path.
-
-## What makes it different
-
-- **Structural safety, not a permission check.** There is no function anywhere in
-  this codebase that suspends/terminates/reinstates an award, changes payment
-  details, sends a communication, discloses resident information, or records a
-  finding of fact — these aren't gated behind an approval flag that could be
-  bypassed, they were simply never built. See `DECISIONS.md` → "Structural Safety" for
-  exactly how that's verified.
-- **Escalation and hand-off are deliberately distinct** — different triggers (§3 vs
-  §3.9), different meanings, different audit actions — not one generic "blocked"
-  bucket.
-- **Policy is data, not branches.** ACA-2026/1's restricted-action rules live in
-  `backend/app/policy_rules.json`; a new restricted category is a data change, not a
-  code change.
-- **Partial work is never discarded.** History/household data already retrieved for a
-  referral is reused for its hand-off record — never re-fetched, never thrown away.
-- **One referral escalating or handing off never stops the queue.** Every one of the
-  12 referrals is always reached and recorded, including a `failed` outcome that
-  isolates an unexpected per-referral error instead of crashing the run.
-- **Honest deployment documentation.** The live demo's `DECISIONS.md` → "Deployment"
-  entry documents a real production connectivity failure (Render private networking
-  didn't resolve), how it was diagnosed from live audit logs, and how it was fixed —
-  not just the happy path.
-
-## How to try it
-
-**Fastest — no setup:** open the [live demo](https://caseworker-morning-agent.onrender.com/)
-and click **"Process overnight referral queue"**, or hit the API directly at
-[`/docs`](https://caseworker-morning-agent.onrender.com/docs).
-
-**Locally, no API/UI needed** — prints the full execution trace to stdout, which
-alone satisfies the problem's traceability requirement:
-
-```bash
-python data-pack/services/history_service.py --port 8083   # terminal 1
-cd backend && python run_cli.py                              # terminal 2
 ```
-
-**Locally, with the API + frontend** — see [Installation](#installation) below.
-
----
-
-## Key features
-
-- End-to-end agent run over the official 12-referral queue
-- Policy-driven evaluation (ACA-2026/1 §2–§4, §6.1), rules kept as data
-  (`backend/app/policy_rules.json`), not hardcoded per-referral branches
-- Structural drafting guard for ACA-2026/2 §3.9 (see "Structural safety" below)
-- Clear, tested distinction between **escalation** and **hand-off**
-- Escalating or handing off one referral never stops the rest of the queue
-- Partial-work preservation: history/household data already retrieved for a referral
-  is reused for its hand-off record, never discarded or re-fetched
-- Full execution trace, both as plain stdout (`run_cli.py`) and via the API/audit log
-- Millisecond-precision audit timestamps, with SQLite's `seq` (not the timestamp) as
-  the authoritative ordering guarantee
-- Safe run cancellation
-- Optional caseworker note-adoption step (approve/reject), reusing a generic,
-  independently-tested explicit-decision primitive (never treats silence, timeout, or
-  an ambiguous response as approval)
-
-## Architecture
+User (browser or CLI)
+        ↓
+Frontend  (frontend/, static HTML/JS)   ──or──   run_cli.py (stdout trace)
+        ↓                                              ↓
+        └──────────────── Backend / API ───────────────┘
+                    (FastAPI, backend/app/main.py)
+                              ↓
+                       Core Services
+        policy.py · triage.py · orchestrator.py · guardrails.py
+                              ↓
+        ┌─────────────────────┴─────────────────────┐
+        ↓                                            ↓
+ Official Resident History API              SQLite audit log (db.py)
+  (data-pack/services/, unmodified)          + official referral queue
+                                                (data-pack/, read-only)
+```
 
 ```
 data-pack/                     official files, unmodified (referral queue, policy,
@@ -237,7 +183,7 @@ backend/app/
   policy.py + policy_rules.json  ACA-2026/1 evaluator (autonomous / escalation)
                                 and ACA-2026/2 evaluator (household / hand-off)
   triage.py                    drafts a note, or refuses (ACA-2026/2 guard)
-  llm.py                       optional, isolated note-phrasing (see "LLM usage")
+  llm.py                       optional, isolated note-phrasing (see Configuration)
   orchestrator.py               per-referral pipeline + execution trace + audit log
   guardrails.py                explicit approve/reject decision primitive
   db.py                        SQLite audit log
@@ -249,212 +195,289 @@ deploy/run_history_service.py  deployment-only host/port wrapper around the
 render.yaml                    Render Blueprint for the live demo (two services)
 ```
 
-Extension points for a future policy change: a new restricted-action category or
-keyword → edit `policy_rules.json` (data, not code); a new workflow step → add it to
-`orchestrator.py`'s pipeline; a new tool/action → add a module next to `triage.py`; a
-new data source → add a client next to `history_client.py`.
+Extension points: a new restricted-action keyword → edit `policy_rules.json` (data,
+not code); a new workflow step → add it to `orchestrator.py`'s pipeline; a new
+tool/action → add a module next to `triage.py`; a new data source → add a client next
+to `history_client.py`.
 
-## Technology stack
+## 🛠️ Technology Stack
 
-- Python 3.11, FastAPI, SQLite (stdlib `sqlite3`), httpx
-- The official history service: Python 3 standard library only (`data-pack/services/`)
-- Plain HTML/CSS/JavaScript frontend (no build step, no framework — and not required
-  for this problem; see "Not required" in `data-pack/README.md`'s companion problem
-  statement)
-- pytest for automated tests (83 passing — see [Test instructions](#test-instructions))
-- Render (Blueprint deployment) for the live demo above
+| Layer | Technology |
+|---|---|
+| Backend / API | Python 3.11, FastAPI, uvicorn |
+| Persistence | SQLite (stdlib `sqlite3`) — audit log only |
+| HTTP client | httpx |
+| Resident History API | Python 3 standard library only (organizers' own service, unmodified) |
+| Frontend | Plain HTML/CSS/JavaScript — no build step, no framework (not required for this problem) |
+| Tests | pytest — 83 passing |
+| Deployment | Render (Blueprint, two services) |
 
 ---
 
-## Prerequisites
+## 📸 Screenshots
+
+All captured directly from the [live deployment](https://caseworker-morning-agent.onrender.com/)
+by driving a real, unmodified Chrome instance through the DevTools Protocol — the
+button was actually clicked and this is the actual live API response. Nothing here
+was mocked or edited.
+
+| | |
+|---|---|
+| **Live application** — landing screen, one action | ![Dashboard](docs/images/dashboard.png) |
+| **🟢 Autonomous triage** — RF-2026-0413, no restricted action, no minor: a note is drafted and waits for adoption | ![Autonomous](docs/images/autonomous-triage.png) |
+| **🔴 Escalation** — RF-2026-0415 requests suspending an award (§3.2); nothing performed, nothing drafted | ![Escalation](docs/images/escalation.png) |
+
+*(The full 6/3/3 results screen and the Day-2 hand-off screenshot are above, in [See It In Action](#-see-it-in-action) and [Handling the Day-2 Change](#-handling-the-day-2-change).)*
+
+### 🎥 GIF status
+
+| File | Status |
+|---|---|
+| `docs/demo/overview.gif` | ❌ Not recorded |
+| `docs/demo/core-workflow.gif` | ❌ Not recorded |
+| `docs/demo/day2-change.gif` | ❌ Not recorded |
+| `docs/demo/edge-case.gif` | ❌ Not recorded |
+| `docs/demo/dashboard.gif` | ❌ Not recorded |
+
+None of these exist in the repository, and none has been faked in their place —
+recording a screen GIF needs interactive screen-capture/GIF-encoding tooling (a
+screen recorder plus `ffmpeg` or Pillow) that isn't available in this environment.
+The five real PNG screenshots above and throughout this README (captured through
+scriptable browser automation, which a GIF recording is not) are the actual current
+visual evidence. To finish this section: record each ~5–15s clip against the
+[live app](https://caseworker-morning-agent.onrender.com/) — a single focused
+workflow per clip, no idle scrolling — and drop it at the path above.
+
+---
+
+## ⚠️ Edge Cases / Reliability
+
+- **History service unreachable or resident not found**: recorded, never crashes the
+  run; referrals that would otherwise be autonomous conservatively hand off
+  (ACA-2026/2 §5.2) — escalation-required referrals are unaffected, since their
+  classification never depends on history data.
+- **Malformed date of birth** for a household member: treated conservatively as
+  hand-off, same as an unreachable service — never silently treated as "no minor."
+- **Malformed/missing referral queue file**: the run fails fast with a clear error
+  rather than silently processing a partial or invented queue.
+- **Cancelling a run** preserves every referral already processed and marks the rest
+  `not_processed` — nothing already done is discarded or repeated.
+- **An already-completed/cancelled run** cannot be cancelled again (`400`).
+- **Adopting/declining twice**, or for a referral with no note (escalated/handed
+  off), is rejected (`400`).
+- **An unexpected error processing one referral** is recorded against that referral
+  only (`failed`) and does not stop the rest of the queue.
+
+---
+
+## 🧪 Testing
+
+- Full automated test suite: **83 tests passing** (`pytest`, run from `backend/`)
+- Runs the real, unmodified official history service as a subprocess — not mocked
+- Covers all 12 official referrals plus synthetic edge cases: unreachable service,
+  unknown resident, malformed date of birth, empty household
+- Full orchestrator pipeline tested: escalation/hand-off don't stop the queue,
+  hand-off never re-fetches history, cancellation preserves partial work, an
+  unexpected exception processing one referral doesn't lose the rest
+- Backend/API layer validated with the same scenarios again, through the HTTP API
+- Clean-clone install → test → run verified from a fresh `git clone` in an empty
+  directory (see [`DECISIONS.md`](DECISIONS.md) for the specific run log)
+
+```bash
+cd backend
+pytest
+```
+
+(Takes roughly two minutes — many tests run the full 12-referral pipeline against the
+real history service, which has built-in simulated per-request latency by design.)
+
+---
+
+## 📦 Installation
+
+### Prerequisites
 
 - Python 3.10 or later
 - pip
 
-## Installation
+### macOS / Linux
 
 ```bash
 git clone https://github.com/poojaaxx/caseworker-morning-agent.git
-cd caseworker-morning-agent
-cd backend
+cd caseworker-morning-agent/backend
 python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
 source .venv/bin/activate
-
 pip install -r requirements.txt
 ```
 
-## Configuration
+### Windows
 
-No configuration is required. Optionally export `ANTHROPIC_API_KEY` to let triage
-notes be phrased by an LLM instead of a deterministic template (see "LLM usage"
-below) — everything else runs identically either way. `HISTORY_SERVICE_URL` can
-override the resident-history API base URL (default `http://127.0.0.1:8083`); the
-test suite sets this itself to a disposable instance and does not need it set
-manually.
+```bash
+git clone https://github.com/poojaaxx/caseworker-morning-agent.git
+cd caseworker-morning-agent\backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-## Running the history service
+## ⚙️ Configuration / Environment Variables
 
-The agent calls the official Resident History API over HTTP, so it must be running
-first, in its own terminal:
+**Nothing is required to run the app.** Both variables below are optional and have
+working defaults; the test suite sets `HISTORY_SERVICE_URL` itself and needs neither
+set manually.
+
+| Variable | Required? | Default | Used for |
+|---|---|---|---|
+| `HISTORY_SERVICE_URL` | No | `http://127.0.0.1:8083` | Base URL the backend uses to call the Resident History API. Accepts a full `http(s)://` URL or a bare `host:port`. |
+| `ANTHROPIC_API_KEY` | No | unset | If set, triage-note *text* is phrased by an LLM call instead of a deterministic template — the decision of *whether* to draft a note at all is made before this is ever called (`policy.py`/`triage.py`), so this can never cause an unauthorized draft. Any failure (network, auth, malformed response) falls back to the deterministic template automatically. |
+
+Set them as normal environment variables (`export VAR=value` / `$env:VAR = "value"`)
+before starting the backend — this project does not read a `.env` file. Never commit
+a real key; see [`backend/.env.example`](backend/.env.example) for the placeholder
+format.
+
+## ▶️ Running the Application
+
+### Step 1 — start the Resident History API (its own terminal)
 
 ```bash
 python data-pack/services/history_service.py --port 8083
 ```
 
-This is the organizers' unmodified script (`GET /residents/<ref>`,
-`/residents/<ref>/household`, `/residents/<ref>/events`, `/health`) — see
-`data-pack/README.md`.
+This is the organizers' unmodified script — `GET /residents/<ref>`,
+`/residents/<ref>/household`, `/residents/<ref>/events`, `/health`.
 
-## Run instructions
+### Step 2 — run the agent
 
-### Plain stdout trace (no other setup)
-
-With the history service running, from `backend/` with the virtualenv activated:
+**Plain stdout trace** (no other setup — satisfies the traceability requirement on its own):
 
 ```bash
+cd backend
 python run_cli.py
 ```
 
-Prints every referral's outcome, policy basis, and full trace directly to the
-terminal. This alone satisfies the problem's traceability requirement — see "Not
-required" in the official problem statement: a UI is not needed.
-
-### API + minimal frontend
+**Or, the API + minimal frontend:**
 
 ```bash
+cd backend
 uvicorn app.main:app --reload
 ```
 
-Then open **http://127.0.0.1:8000**, or use the API directly: `POST /api/runs` starts
-a run and processes the whole queue; `GET /api/runs/{id}` returns its state;
-`POST /api/runs/{id}/referrals/{referral_id}/adopt` (body `{"decision": "approve"}` or
-`"reject"`) adopts or declines a drafted note; `POST /api/runs/{id}/cancel` cancels an
-in-progress run; `GET /api/runs/{id}/audit` returns the full audit trail.
+Then open **http://127.0.0.1:8000**.
 
-## Test instructions
-
-The test suite starts its own disposable copy of the official history service — no
-manual setup needed. From `backend/`, with the virtual environment activated:
-
-```bash
-pytest
-```
-
-(Takes roughly two minutes: many tests run the full 12-referral pipeline against the
-real service, which has built-in simulated per-request latency by design — see
-`data-pack/services/history_service.py`'s docstring.) Currently **83 tests**, all
-passing.
-
-## Example workflow
-
-```bash
-python data-pack/services/history_service.py --port 8083   # terminal 1
-python run_cli.py                                            # terminal 2
-```
-
-`run_cli.py` prints all 12 referrals: which were drafted autonomously, which were
-escalated (with the exact policy section and reason), and which were handed off under
-ACA-2026/2 (with "TRIAGE NOTE NOT GENERATED" made explicit). Verified result, both
-locally and on the live deployment: **6 autonomous, 3 escalated, 3 hand-off, 0
-failed, 0 not_processed**.
+Expected result either way, against the official 12-referral queue: **6 autonomous,
+3 escalated, 3 hand-off, 0 failed, 0 not_processed** — verified both locally and on
+the [live deployment](https://caseworker-morning-agent.onrender.com/).
 
 ---
 
-## Human approval / escalation / hand-off
+## 🔌 API / Technical Details
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health` | Liveness check |
+| `GET` | `/api/history-service/health` | Whether the backend can currently reach the Resident History API |
+| `GET` | `/api/referrals` | The official 12-referral queue |
+| `POST` | `/api/runs` | Starts a run and processes the whole queue |
+| `GET` | `/api/runs/{id}` | Current state of a run |
+| `POST` | `/api/runs/{id}/referrals/{referral_id}/adopt` | Body `{"decision": "approve"\|"reject"}` — adopts or declines a drafted note |
+| `POST` | `/api/runs/{id}/cancel` | Cancels an in-progress run |
+| `GET` | `/api/runs/{id}/audit` | Full audit trail for a run |
+
+Interactive Swagger docs for all of the above: [`/docs`](https://caseworker-morning-agent.onrender.com/docs).
 
 There is no "propose an out-of-authority action, then a human approves it, then the
-agent executes it" flow in this system — see **Structural safety** below for why that
-is a stronger guarantee, not a missing feature. What ACA-2026/1 §2.4 does describe is
-a human decision: a drafted triage note is a proposal with no effect until a
-caseworker **adopts** it. That is the one place this system asks for an explicit
-human decision (`POST .../adopt`, body `{"decision": "approve"}` or `"reject"}`).
-Anything else — missing, empty, wrong case, wrong type, `"yes"` — is rejected by the
-same explicit-decision primitive used throughout (`guardrails.py`) and never treated
-as approval.
+agent executes it" flow — see [Structural Safety](#-structural-safety) for why that's
+a stronger guarantee, not a missing feature. The one place this system asks for an
+explicit human decision is adopting/declining an already-drafted note; anything other
+than an exact `"approve"`/`"reject"` is rejected, never treated as approval.
 
-## Structural safety
+---
 
-`DECISIONS.md` → **"Structural Safety"** states, precisely, what this codebase cannot
-do without a human and how that is verified — not what it was told not to do.
+## 🧠 Engineering Decisions
 
-## Failure behavior
+Full design log, including corrections and things that were tried and didn't work, in
+[`DECISIONS.md`](DECISIONS.md). Highlights:
 
-- History service unreachable or a resident not found: recorded, never crashes the
-  run; referrals whose action would otherwise be autonomous conservatively hand off
-  (ACA-2026/2 §5.2), while escalation-required referrals are unaffected (their
-  classification does not depend on history data).
-- Malformed date of birth for a household member: treated conservatively as hand-off,
-  same as an unreachable service.
-- Malformed/missing referral queue file: the run fails fast with a clear error rather
-  than silently processing a partial or invented queue.
-- Cancelling a run preserves every referral already processed and marks the rest
-  `not_processed` — nothing already done is discarded or repeated.
-- An already-completed or already-cancelled run cannot be cancelled again (400, not
-  silently accepted).
-- Adopting/declining a note twice, or for a referral that was escalated/handed off
-  (no note exists), is rejected (400).
-- An unexpected error processing one referral is recorded against that referral only
-  (`failed`) and does not stop the rest of the queue.
+- **[Structural Safety](#-structural-safety)** — what this codebase is structurally
+  incapable of doing without a human, and how that's verified.
+- **Policy as data** — ACA-2026/1's restricted-action rules live in
+  `policy_rules.json`; a new category is a data edit, not a code change.
+- **Escalation vs. hand-off** kept as deliberately separate types, outcomes, and
+  audit actions throughout the codebase, not merged for convenience.
+- **A real production incident, documented honestly** — the live deployment's
+  original private-networking configuration failed in production (`DECISIONS.md` →
+  "Deployment"); the failure was diagnosed from live audit logs, not assumed, and the
+  fix — plus the diagnosis process — is written up in full rather than silently
+  corrected.
+- **A self-review pass found real bugs**, not just style issues: dead code
+  (`guardrails.is_authorized()` and three unused model classes) and a genuine gap (no
+  catch-all around per-referral processing, so one bug could have silently dropped
+  every referral not yet reached) — both fixed and both documented under "Testing" in
+  `DECISIONS.md`, not glossed over.
 
-## Known limitations
+### 🛡 Structural Safety
+
+**There is no function anywhere in this codebase that suspends, terminates, or
+reinstates an award; changes payment/bank/card details; sends a communication;
+discloses resident information; or records a finding of fact.** These are not
+capabilities gated behind a permission check that could be bypassed by a bug — they
+were simply never built. That's a stronger guarantee than an approval gate, because
+an approval gate is a check on a capability that exists; here, the capability doesn't
+exist at all. Full detail in [`DECISIONS.md` → "Structural Safety"](DECISIONS.md).
+
+---
+
+## 🚧 Limitations
 
 - The 12-referral queue and history data are the official, fixed dataset supplied
-  with the problem — this system does not generalize to referral types beyond it (the
-  official problem statement explicitly does not require that).
-- Run state lives in-memory in the FastAPI process; the audit log (SQLite) and every
+  with the problem — this system does not generalize beyond it (not required by the
+  brief).
+- Run state lives in-memory in the FastAPI process; SQLite's audit log and each
   referral's result are what survive a restart, not an in-progress run's position.
-- `policy_rules.json`'s keyword rules are our own structured translation of the prose
-  policy (see `DECISIONS.md` → "Policy as Data") — a genuinely novel restricted-action
-  category would need a new rule added to that file, not full NLU.
+- `policy_rules.json`'s keyword rules are a structured translation of the prose
+  policy, not full NLU — a genuinely novel restricted-action category needs a new
+  rule added to that file.
 - "Sending" a communication, changing payment details, etc. are not implemented at
-  all (see Structural safety) — this system escalates them, it does not simulate
-  performing them.
+  all (see [Structural Safety](#-structural-safety)) — this system escalates them,
+  it does not simulate performing them.
 - The live Render deployment is a free-tier demo: cold starts after idle periods, and
-  SQLite is not persisted across redeploys/restarts. See `DECISIONS.md` → "Deployment".
+  SQLite is not persisted across redeploys/restarts.
 
-## Future improvements
+## 🔮 Future Improvements
 
-See `DECISIONS.md` → "What We Would Improve First."
+See [`DECISIONS.md` → "What We Would Improve First"](DECISIONS.md) — replacing the
+keyword-table classifier with one that can flag its own low-confidence matches,
+persisting orchestrator run state across restarts, and a richer supervisor-facing
+escalation queue.
 
-## Clean clone verification
+## 🤖 AI Usage
 
-Verified by running exactly the steps above (`git clone` → venv → `pip install` →
-start the history service → `pytest` → `python run_cli.py`) from a fresh clone in an
-empty directory. See `DECISIONS.md` for the specific run log.
+Claude Code was used as a development assistance tool — brainstorming, scaffolding,
+test-writing help, debugging, and documentation drafting — with architecture, policy
+decisions, guardrail design, and final implementation choices directed and reviewed
+by the developer throughout. Full statement in [`AI-USAGE.md`](AI-USAGE.md).
 
-**This repository remains the official, reproducible submission** — everything above
-works from a clean clone with no deployment platform involved. The live demo is
-additional, optional infrastructure, not a replacement for it.
+---
 
-## Live deployment details
+## 🚀 Demo / Deployment Links
 
-`render.yaml` at the repo root is a Render Blueprint defining two services:
+| | |
+|---|---|
+| **Live app (UI + API)** | https://caseworker-morning-agent.onrender.com/ |
+| **API docs (Swagger)** | https://caseworker-morning-agent.onrender.com/docs |
+| **Resident History Service** | https://caseworker-history-service.onrender.com |
+| **Repository** | https://github.com/poojaaxx/caseworker-morning-agent |
 
-- **`caseworker-history-service`** — the official, unmodified
-  `data-pack/services/history_service.py`, started via `deploy/run_history_service.py`
-  (a thin wrapper that only changes host/port binding for a hosted environment — see
-  that file's docstring, and `DECISIONS.md` → "Deployment" for exactly why and how
-  this is still honestly "the unmodified official service"). Reachable at its own
-  public URL — private networking (`fromService`/`hostport`) was tried first and did
-  not resolve on Render's free plan; `DECISIONS.md` → "Deployment" has the full,
-  honest account of that, including how it was diagnosed from two real production
-  runs' audit logs.
-- **`caseworker-morning-agent`** — the same FastAPI app + frontend described above,
-  unchanged, with `HISTORY_SERVICE_URL` pointed at the history service's public URL
-  instead of defaulting to `localhost`.
+The live deployment uses the official supplied referral and resident history data
+pack — the same fixed 12-referral queue and resident records as local development,
+not a mock or a subset. It's a free-tier Render deployment, **not a production
+deployment** — cold starts after idle periods are expected, and the audit log isn't
+persisted across redeploys. `render.yaml` at the repo root is the Blueprint defining
+both services; see [`DECISIONS.md` → "Deployment"](DECISIONS.md) for the full,
+honest account, including the private-networking failure that was diagnosed live
+from production audit logs and fixed.
 
-To deploy your own copy: connect this GitHub repository in the Render dashboard as a
-Blueprint (New → Blueprint), point it at `render.yaml`, and deploy both services — no
-manual per-service configuration is needed beyond that.
-
-## Further reading
-
-- [`DECISIONS.md`](DECISIONS.md) — the full design log: what was built, what was
-  corrected, what was rejected, and why, including the deployment incident above
-- [`AI-USAGE.md`](AI-USAGE.md) — how AI assistance was used on this project
-- [`data-pack/README.md`](data-pack/README.md) — the official problem statement and
-  data pack this project was built against
+**This repository remains the official, reproducible submission** independent of the
+live demo — clone → venv → `pip install` → start the history service → `pytest` →
+`python run_cli.py` works from a clean clone with no deployment platform involved.
