@@ -1,0 +1,38 @@
+# Claude Code local configuration
+.claude/
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# SQLite runtime database (regenerated from seed data on startup)
+data/*.db
+data/*.db-journal
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Testing/cache
+.pytest_cache/
+.coverage
+htmlcov/
