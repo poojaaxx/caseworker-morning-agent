@@ -15,12 +15,23 @@ or "empty household". Callers (policy.py) must treat both as "cannot be establis
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 
 from app.models import HistoryFetchOutcome, HistoryFetchResult, HistoryRecord, HouseholdMember
 
 DEFAULT_BASE_URL = os.environ.get("HISTORY_SERVICE_URL", "http://127.0.0.1:8083")
+
+# Free-tier hosting (see render.yaml) puts the history service to sleep after
+# inactivity and rate-limits bursts of traffic while it cold-starts - both surface as
+# either a connection error or a 429/5xx response, not as the resident data being
+# genuinely unavailable. Retrying a few times with backoff rides out that window
+# instead of letting one cold-start turn into a false HANDOFF (ACA-2026/2 5.2 treats
+# any UNAVAILABLE outcome as "household composition cannot be established").
+_RETRY_STATUS_CODES = {429, 502, 503, 504}
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 0.4
 
 
 class HistoryServiceClient:
@@ -45,9 +56,34 @@ class HistoryServiceClient:
         except httpx.HTTPError:
             return False
 
+    def _get_with_retry(self, url: str) -> httpx.Response | None:
+        """GETs `url`, retrying transient failures (connection errors, 429, 5xx) with
+        backoff. Returns None if every attempt was transient failure; a non-2xx/3xx
+        response is still returned as-is on the final attempt so callers keep handling
+        e.g. 404 exactly as before."""
+        last_exc: httpx.HTTPError | None = None
+        resp: httpx.Response | None = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                resp = self._client.get(url)
+                last_exc = None
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                resp = None
+
+            is_last_attempt = attempt == _RETRY_ATTEMPTS - 1
+            transient = last_exc is not None or (resp is not None and resp.status_code in _RETRY_STATUS_CODES)
+            if not transient or is_last_attempt:
+                break
+            time.sleep(_RETRY_BACKOFF_SECONDS * (2 ** attempt))
+
+        if last_exc is not None:
+            raise last_exc
+        return resp
+
     def get_full_record(self, resident_ref: str) -> HistoryFetchResult:
         try:
-            resp = self._client.get(f"{self.base_url}/residents/{resident_ref}")
+            resp = self._get_with_retry(f"{self.base_url}/residents/{resident_ref}")
         except httpx.HTTPError as exc:
             return HistoryFetchResult(
                 outcome=HistoryFetchOutcome.UNAVAILABLE,
