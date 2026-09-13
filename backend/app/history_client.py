@@ -24,18 +24,22 @@ from app.models import HistoryFetchOutcome, HistoryFetchResult, HistoryRecord, H
 DEFAULT_BASE_URL = os.environ.get("HISTORY_SERVICE_URL", "http://127.0.0.1:8083")
 
 # Free-tier hosting (see render.yaml) puts the history service to sleep after
-# inactivity and rate-limits bursts of traffic while it cold-starts - both surface as
-# either a connection error or a 429/5xx response, not as the resident data being
-# genuinely unavailable. Retrying a few times with backoff rides out that window
-# instead of letting one cold-start turn into a false HANDOFF (ACA-2026/2 5.2 treats
-# any UNAVAILABLE outcome as "household composition cannot be established").
+# inactivity; waking it from a cold start has been observed taking upwards of 10s,
+# and bursts of traffic while it cold-starts get rate-limited on top of that. Both
+# surface as either a connection error/timeout or a 429/5xx response, not as the
+# resident data being genuinely unavailable. A timeout long enough to survive a cold
+# start, plus a couple of retries with backoff for rate-limiting once it's awake,
+# rides out that window instead of letting one cold-start turn into a false HANDOFF
+# (ACA-2026/2 5.2 treats any UNAVAILABLE outcome as "household composition cannot be
+# established").
 _RETRY_STATUS_CODES = {429, 502, 503, 504}
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 0.4
+DEFAULT_TIMEOUT_SECONDS = 25.0
 
 
 class HistoryServiceClient:
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = 5.0):
+    def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = DEFAULT_TIMEOUT_SECONDS):
         base_url = base_url.rstrip("/")
         if not base_url.startswith(("http://", "https://")):
             # Render's blueprint `fromService` linking (see render.yaml) hands services
